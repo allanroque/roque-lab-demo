@@ -14,8 +14,12 @@
 #   host_cpus        - Numero de vCPUs (default: 2)
 #   host_memory_mb   - Memoria RAM em MB (default: 2048)
 #   host_disk        - Disco (informativo para CMDB, ex: 40GB)
-#   vmrest_user      - Usuario vmrest  # Configurado no AAP Controller
-#   vmrest_password  - Senha vmrest    # Configurado no AAP Controller
+#
+# Credenciais (injetadas via CRED-VMWARE-ROQUE, credential type: VMware Fusion REST API):
+#   vmrest_host      - IP do hypervisor (extra_vars via injector)
+#   vmrest_port      - Porta do vmrest (extra_vars via injector, default: 8698)
+#   vmrest_user      - Usuario vmrest (extra_vars via injector)
+#   vmrest_password  - Senha vmrest (extra_vars via injector, secret)
 # =============================================================================
 - name: Provisionar VM no VMware Fusion
   hosts: localhost
@@ -33,10 +37,8 @@
     host_memory_mb: 2048
     host_disk: ""
     vm_template_id: "FOVC332SCFEC425PKT21OGQM5UEETP0A"
-    vmrest_host: "192.168.100.1"
-    vmrest_port: 8698
-    vmrest_user: ""
-    vmrest_password: ""
+    # vmrest_* injetados pelo credential type VMware Fusion REST API (id: 36)
+    # NAO definir defaults aqui — os valores vem da credencial CRED-VMWARE-ROQUE
     vmrest_base_url: "http://{{ vmrest_host }}:{{ vmrest_port }}/api"
 
   tasks:
