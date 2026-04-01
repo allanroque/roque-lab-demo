@@ -56,6 +56,7 @@ PLAYBOOKS = [
     ("playbooks/linux/dns/conf_linux_dns.yml", "LINUX-CONFIG-DNS", "ssh", "linux"),
     ("playbooks/linux/hardening/config-chrony.yml", "LINUX-HARDENING-CHRONY", "ssh", "linux"),
     ("playbooks/linux/hardening/config_agent_virt.yml", "LINUX-CONFIG-AGENT-VIRT", "ssh", "linux"),
+    ("playbooks/linux/hardening/config_vmtools.yml", "LINUX-CONFIG-VMTOOLS", "ssh", "linux"),
     ("playbooks/linux/hardening/config_ansible_log.yml", "LINUX-HARDENING-ANSIBLE-LOG", "ssh", "linux"),
     ("playbooks/linux/hardening/config_basic_packages.yml", "LINUX-HARDENING-BASIC-PACKAGES", "ssh", "linux"),
     ("playbooks/linux/hardening/config_basic_services.yml", "LINUX-HARDENING-BASIC-SERVICES", "ssh", "linux"),

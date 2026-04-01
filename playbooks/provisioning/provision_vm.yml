@@ -1,0 +1,239 @@
+---
+# =============================================================================
+# Playbook: Provisionar VM no VMware Fusion via vmrest API
+# Descricao: Clona template, configura recursos, liga a VM e aguarda SSH
+#
+# Variaveis para Survey do AAP:
+#   host_name        - Nome curto do host (ex: server03) [obrigatorio]
+#   host_domain      - Dominio do host (default: aroque.com.br)
+#   host_ip          - IP do host (ex: 192.168.100.50) [obrigatorio]
+#   host_description - Descricao do host (default: Provisioned by Ansible)
+#   host_role        - Role/funcao do servidor (webserver | database | app | bastion)
+#   host_group       - Grupo do servidor (lab | prod | staging)
+#   host_env         - Ambiente (lab | dev | staging | production)
+#   vm_cpus          - Numero de vCPUs (default: 2)
+#   vm_memory_mb     - Memoria RAM em MB (default: 2048)
+#   vmrest_host      - IP do host VMware Fusion (default: 192.168.100.1)
+#   vmrest_port      - Porta do vmrest (default: 8698)
+#   vmrest_user      - Usuario vmrest  # Configurado no AAP Controller
+#   vmrest_password  - Senha vmrest    # Configurado no AAP Controller
+# =============================================================================
+- name: Provisionar VM no VMware Fusion
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    host_name: ""
+    host_domain: "aroque.com.br"
+    host_ip: ""
+    host_description: "Provisioned by Ansible"
+    host_role: "webserver"
+    host_group: "lab"
+    host_env: "lab"
+    vm_cpus: 2
+    vm_memory_mb: 2048
+    vm_template_id: "FOVC332SCFEC425PKT21OGQM5UEETP0A"
+    vmrest_host: "192.168.100.1"
+    vmrest_port: 8698
+    vmrest_user: ""
+    vmrest_password: ""
+    vmrest_base_url: "http://{{ vmrest_host }}:{{ vmrest_port }}/api"
+
+  tasks:
+    # ── Validacao ────────────────────────────────────────────────────────────
+    - name: Validar variaveis obrigatorias
+      ansible.builtin.assert:
+        that:
+          - host_name | length > 0
+          - host_ip | length > 0
+          - vmrest_user | length > 0
+          - vmrest_password | length > 0
+        fail_msg: "As variaveis host_name, host_ip, vmrest_user e vmrest_password sao obrigatorias"
+        quiet: true
+      tags:
+        - provisioning
+        - vmware
+        - validate
+
+    - name: Construir FQDN do host
+      ansible.builtin.set_fact:
+        host_fqdn: "{{ host_name.split('.')[0] }}.{{ host_domain }}"
+      tags:
+        - provisioning
+        - vmware
+
+    # ── Verificar se VM ja existe ────────────────────────────────────────────
+    - name: Listar VMs existentes
+      ansible.builtin.uri:
+        url: "{{ vmrest_base_url }}/vms"
+        method: GET
+        url_username: "{{ vmrest_user }}"
+        url_password: "{{ vmrest_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: vm_list
+      tags:
+        - provisioning
+        - vmware
+
+    - name: Verificar se VM {{ host_fqdn }} ja existe
+      ansible.builtin.set_fact:
+        vm_exists: "{{ vm_list.json | selectattr('path', 'search', host_fqdn) | list | length > 0 }}"
+        vm_existing_id: "{{ (vm_list.json | selectattr('path', 'search', host_fqdn) | list | first).id | default('') }}"
+      tags:
+        - provisioning
+        - vmware
+
+    - name: Informar que VM ja existe
+      ansible.builtin.debug:
+        msg: "VM {{ host_fqdn }} ja existe (ID: {{ vm_existing_id }}). Pulando clone."
+      when: vm_exists | bool
+      tags:
+        - provisioning
+        - vmware
+
+    # ── Clonar template ──────────────────────────────────────────────────────
+    - name: Clonar VM a partir do template
+      ansible.builtin.uri:
+        url: "{{ vmrest_base_url }}/vms"
+        method: POST
+        url_username: "{{ vmrest_user }}"
+        url_password: "{{ vmrest_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          name: "{{ host_fqdn }}"
+          parentId: "{{ vm_template_id }}"
+        status_code:
+          - 200
+          - 201
+        return_content: true
+      register: vm_clone
+      when: not (vm_exists | bool)
+      tags:
+        - provisioning
+        - vmware
+        - clone
+
+    - name: Registrar ID da VM
+      ansible.builtin.set_fact:
+        vm_id: "{{ vm_clone.json.id | default(vm_existing_id) }}"
+      tags:
+        - provisioning
+        - vmware
+
+    - name: Exibir resultado do clone
+      ansible.builtin.debug:
+        msg: "VM {{ host_fqdn }} clonada com sucesso (ID: {{ vm_id }})"
+      when: not (vm_exists | bool)
+      tags:
+        - provisioning
+        - vmware
+
+    # ── Configurar recursos da VM ────────────────────────────────────────────
+    - name: Configurar vCPUs ({{ vm_cpus }}) e memoria ({{ vm_memory_mb }} MB)
+      ansible.builtin.uri:
+        url: "{{ vmrest_base_url }}/vms/{{ vm_id }}"
+        method: PUT
+        url_username: "{{ vmrest_user }}"
+        url_password: "{{ vmrest_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          processors: "{{ vm_cpus | int }}"
+          memory: "{{ vm_memory_mb | int }}"
+        status_code:
+          - 200
+          - 201
+        return_content: true
+      register: vm_config
+      tags:
+        - provisioning
+        - vmware
+        - config
+
+    # ── Ligar a VM ───────────────────────────────────────────────────────────
+    - name: Verificar estado atual da VM
+      ansible.builtin.uri:
+        url: "{{ vmrest_base_url }}/vms/{{ vm_id }}/power"
+        method: GET
+        url_username: "{{ vmrest_user }}"
+        url_password: "{{ vmrest_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: vm_power_state
+      tags:
+        - provisioning
+        - vmware
+
+    - name: Ligar VM {{ host_fqdn }}
+      ansible.builtin.uri:
+        url: "{{ vmrest_base_url }}/vms/{{ vm_id }}/power"
+        method: PUT
+        url_username: "{{ vmrest_user }}"
+        url_password: "{{ vmrest_password }}"
+        force_basic_auth: true
+        body_format: form-urlencoded
+        body: "on"
+        status_code:
+          - 200
+          - 201
+        return_content: true
+      when: vm_power_state.json.power_state | default('') != 'poweredOn'
+      register: vm_power_on
+      tags:
+        - provisioning
+        - vmware
+
+    # ── Aguardar conectividade ───────────────────────────────────────────────
+    - name: Aguardar SSH estar disponivel em {{ host_ip }} (porta 22)
+      ansible.builtin.wait_for:
+        host: "{{ host_ip }}"
+        port: 22
+        timeout: 300
+        delay: 15
+        state: started
+      tags:
+        - provisioning
+        - vmware
+        - validate
+
+    # ── Resumo ───────────────────────────────────────────────────────────────
+    - name: Exibir resumo do provisionamento
+      ansible.builtin.debug:
+        msg:
+          - "================================================"
+          - " VM Provisionada com Sucesso"
+          - "================================================"
+          - "Host     : {{ host_fqdn }}"
+          - "IP       : {{ host_ip }}"
+          - "Role     : {{ host_role }}"
+          - "Group    : {{ host_group }}"
+          - "Env      : {{ host_env }}"
+          - "vCPUs    : {{ vm_cpus }}"
+          - "RAM      : {{ vm_memory_mb }} MB"
+          - "VM ID    : {{ vm_id }}"
+          - "SSH      : OK"
+          - "================================================"
+      tags:
+        - provisioning
+        - vmware
+
+    # ── Exportar variaveis para proximo job no workflow ──────────────────────
+    - name: Exportar dados da VM para proximo job template
+      ansible.builtin.set_stats:
+        data:
+          host_ip: "{{ host_ip }}"
+          host_name: "{{ host_name }}"
+          host_fqdn: "{{ host_fqdn }}"
+          host_description: "{{ host_description }}"
+          host_role: "{{ host_role }}"
+          host_group: "{{ host_group }}"
+          host_env: "{{ host_env }}"
+          vm_id: "{{ vm_id }}"
+          vm_cpus: "{{ vm_cpus }}"
+          vm_memory_mb: "{{ vm_memory_mb }}"
+      tags:
+        - provisioning
+        - vmware
+        - export
