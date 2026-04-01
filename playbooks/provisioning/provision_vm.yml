@@ -11,8 +11,12 @@
 #   host_role        - Role/funcao do servidor (webserver | database | app | bastion)
 #   host_group       - Grupo do servidor (lab | prod | staging)
 #   host_env         - Ambiente (lab | dev | staging | production)
-#   vm_cpus          - Numero de vCPUs (default: 2)
-#   vm_memory_mb     - Memoria RAM em MB (default: 2048)
+#   host_cpu         - Metadado vCPU (futuro; survey AAP)
+#   host_memory      - Metadado RAM (futuro; survey AAP)
+#   host_disk        - Metadado disco (futuro; survey AAP)
+#   vm_cpus          - Numero de vCPUs (default: 2) — aplicado no vmrest
+#   vm_memory        - Reservado (futuro)
+#   vm_memory_mb     - Memoria RAM em MB (default: 2048) — aplicado no vmrest
 #   vmrest_host      - IP do host VMware Fusion (default: 192.168.100.1)
 #   vmrest_port      - Porta do vmrest (default: 8698)
 #   vmrest_user      - Usuario vmrest  # Configurado no AAP Controller
@@ -30,7 +34,11 @@
     host_role: "webserver"
     host_group: "lab"
     host_env: "lab"
+    host_cpu: 0
+    host_memory: 0
+    host_disk: ""
     vm_cpus: 2
+    vm_memory: 0
     vm_memory_mb: 2048
     vm_template_id: "FOVC332SCFEC425PKT21OGQM5UEETP0A"
     vmrest_host: "192.168.100.1"
@@ -232,7 +240,11 @@
           host_env: "{{ host_env }}"
           vm_id: "{{ vm_id }}"
           vm_cpus: "{{ vm_cpus }}"
+          vm_memory: "{{ vm_memory }}"
           vm_memory_mb: "{{ vm_memory_mb }}"
+          host_cpu: "{{ host_cpu }}"
+          host_memory: "{{ host_memory }}"
+          host_disk: "{{ host_disk }}"
       tags:
         - provisioning
         - vmware

@@ -44,6 +44,7 @@ PLAYBOOKS = [
     ("playbooks/ipam/add_ip.yml", "IPAM-ADD-IP", "ssh", "ipam"),
     ("playbooks/ipam/del_ip.yml", "IPAM-DEL-IP", "ssh", "ipam"),
     ("playbooks/ipam/get_next_ip.yml", "IPAM-GET-NEXT-IP", "ssh", "ipam"),
+    ("playbooks/provisioning/provision_vm.yml", "PROVISION-VM-LOCAL", "none", "provisioning"),
     ("playbooks/linux/adhoc/adhoc_checklist.yml", "LINUX-ADHOC-CHECKLIST", "ssh", "linux"),
     ("playbooks/linux/adhoc/adhoc_command.yml", "LINUX-ADHOC-COMMAND", "ssh", "linux"),
     ("playbooks/linux/adhoc/adhoc_logcollector.yml", "LINUX-ADHOC-LOGCOLLECTOR", "ssh", "linux"),
@@ -278,6 +279,7 @@ def ensure_labels():
         "database",
         "aws",
         "cloud",
+        "provisioning",
     ]
     label_map = {}
     for name in names:
@@ -307,6 +309,9 @@ def all_labels_for_jt(jt_name: str, primary: str) -> list[str]:
     if primary in ("dns", "ipam"):
         labs.append("config")
         return labs
+    if primary == "provisioning":
+        labs.append("config")
+        return labs
     if primary == "linux":
         if jt_name.startswith("LINUX-ADHOC") or jt_name == "LINUX-TSHOOT":
             return labs
@@ -327,6 +332,8 @@ def default_limit_for_jt(name: str) -> str:
     if name.startswith("SNOW-"):
         return ""
     if name.startswith("DNS-") or name.startswith("IPAM-"):
+        return ""
+    if name.startswith("PROVISION-"):
         return ""
     if name in ("APACHE-DEPLOY-LINUX", "APACHE-DEPLOY-LINUX-V1"):
         return "apache"
@@ -358,7 +365,15 @@ def associate_label(jt_id, label_id):
 def create_job_templates(project_id, inventory_id, ssh_id, snow_id, label_map):
     jt_by_name = {}
     for playbook, name, cred_kind, lab in PLAYBOOKS:
-        cred_id = ssh_id if cred_kind == "ssh" else snow_id
+        if cred_kind == "ssh":
+            cred_id = ssh_id
+            become = True
+        elif cred_kind == "snow":
+            cred_id = snow_id
+            become = False
+        else:
+            cred_id = None
+            become = False
         existing = jt_exists(project_id, name)
         body = {
             "name": name,
@@ -369,7 +384,7 @@ def create_job_templates(project_id, inventory_id, ssh_id, snow_id, label_map):
             "playbook": playbook,
             "verbosity": 1,
             "execution_environment": EE_ID,
-            "become_enabled": cred_kind == "ssh",
+            "become_enabled": become,
             "diff_mode": True,
             "limit": default_limit_for_jt(name),
         }
@@ -381,7 +396,8 @@ def create_job_templates(project_id, inventory_id, ssh_id, snow_id, label_map):
             p = api("POST", "/job_templates/", body)
             jtid = p["id"]
             print(f"Created JT {name} id={jtid}")
-        associate_cred(jtid, cred_id)
+        if cred_id is not None:
+            associate_cred(jtid, cred_id)
         for lbl in all_labels_for_jt(name, lab):
             associate_label(jtid, label_map[lbl])
         jt_by_name[name] = jtid

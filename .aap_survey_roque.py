@@ -79,6 +79,21 @@ def q_multi(var, qname, choices, desc="", default="", required=False):
     }
 
 
+def q_integer(var, qname, desc="", default=0, required=False, min_v=0, max_v=999999):
+    return {
+        "min": min_v,
+        "max": max_v,
+        "type": "integer",
+        "choices": [],
+        "default": default,
+        "required": required,
+        "variable": var,
+        "new_question": True,
+        "question_name": qname,
+        "question_description": desc,
+    }
+
+
 # (jt_name, survey_body) — body = {"name":"","description":"","spec":[...]}
 SURVEYS = [
     (
@@ -398,6 +413,124 @@ SURVEYS = [
                     "",
                     False,
                     64,
+                ),
+            ],
+        },
+    ),
+    (
+        "PROVISION-VM-LOCAL",
+        {
+            "name": "",
+            "description": "provision_vm.yml — VMware Fusion local (vmrest); credenciais vmrest no JT",
+            "spec": [
+                q_text(
+                    "host_name",
+                    "Nome do host (curto)",
+                    "Ex: server03 (sem FQDN)",
+                    "",
+                    True,
+                    128,
+                ),
+                q_text(
+                    "host_ip",
+                    "IP do host",
+                    "Ex: 192.168.100.50",
+                    "",
+                    True,
+                    40,
+                ),
+                q_text(
+                    "host_domain",
+                    "Domínio DNS",
+                    "Sufixo FQDN",
+                    "aroque.com.br",
+                    False,
+                    128,
+                ),
+                q_text(
+                    "host_description",
+                    "Descrição",
+                    "Inventário / CMDB",
+                    "Provisioned by Ansible",
+                    False,
+                    512,
+                ),
+                q_integer(
+                    "host_cpu",
+                    "vCPUs (metadado / futuro)",
+                    "Reservado; playbook ainda usa vm_cpus",
+                    0,
+                    False,
+                    0,
+                    256,
+                ),
+                q_integer(
+                    "host_memory",
+                    "RAM MB (metadado / futuro)",
+                    "Reservado",
+                    0,
+                    False,
+                    0,
+                    1048576,
+                ),
+                q_text(
+                    "host_disk",
+                    "Disco (metadado / futuro)",
+                    "Ex: 20G",
+                    "",
+                    False,
+                    32,
+                ),
+                q_multi(
+                    "host_role",
+                    "Função (role)",
+                    ["webserver", "database", "app", "bastion"],
+                    "Papel do servidor",
+                    "webserver",
+                    False,
+                ),
+                q_multi(
+                    "host_group",
+                    "Grupo",
+                    ["lab", "prod", "staging"],
+                    "Grupo lógico",
+                    "lab",
+                    False,
+                ),
+                q_multi(
+                    "host_env",
+                    "Ambiente",
+                    ["lab", "dev", "staging", "production"],
+                    "Ambiente",
+                    "lab",
+                    False,
+                ),
+                q_integer(
+                    "vm_cpus",
+                    "vCPUs (vmrest)",
+                    "Aplicado hoje no PUT da VM",
+                    2,
+                    False,
+                    1,
+                    64,
+                ),
+                q_integer(
+                    "vm_memory",
+                    "RAM MB (alias futuro)",
+                    "Reservado; use vm_memory_mb",
+                    0,
+                    False,
+                    0,
+                    1048576,
+                ),
+                q_integer(
+                    "vm_memory_mb",
+                    "RAM em MB (vmrest)",
+                    "Aplicado hoje no PUT da VM",
+                    2048,
+                    False,
+                    512,
+                    262144,
                 ),
             ],
         },
