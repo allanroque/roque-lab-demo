@@ -227,7 +227,10 @@
       ansible.builtin.add_host:
         name: "{{ vm_boot_ip }}"
         groups: vm_newly_provisioned
-        ansible_user: ansible
+        ansible_user: "{{ ansible_user | default('ansible') }}"
+        ansible_password: "{{ ansible_password | default(omit) }}"
+        ansible_become_password: "{{ ansible_become_password | default(ansible_password | default(omit)) }}"
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=no"
         host_fqdn: "{{ host_fqdn }}"
         host_ip_target: "{{ host_ip }}"
         host_name_short: "{{ host_name.split('.')[0] }}"
