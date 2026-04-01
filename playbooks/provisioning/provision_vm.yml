@@ -280,35 +280,50 @@
         - vmware
         - config
 
-    - name: Detectar interface de rede principal
+    - name: Detectar interface e conexao de rede principal
       ansible.builtin.set_fact:
         net_interface: "{{ ansible_default_ipv4.interface }}"
-        net_connection: "{{ ansible_default_ipv4.alias | default(ansible_default_ipv4.interface) }}"
       tags:
         - provisioning
         - vmware
         - config
 
-    - name: Configurar IP estatico {{ host_ip_target }} via nmcli
-      community.general.nmcli:
-        conn_name: "{{ net_connection }}"
-        ifname: "{{ net_interface }}"
-        type: ethernet
-        ip4: "{{ host_ip_target }}/24"
-        gw4: "192.168.100.1"
-        dns4:
-          - "192.168.100.11"
-        method4: manual
-        state: present
-        autoconnect: true
-      tags:
-        - provisioning
-        - vmware
-        - config
-
-    - name: Aplicar configuracao de rede (reiniciar conexao)
+    - name: Obter nome da conexao NetworkManager
       ansible.builtin.command:
-        cmd: "nmcli connection up {{ net_connection }}"
+        cmd: "nmcli -t -f NAME,DEVICE connection show --active"
+      register: nm_connections
+      changed_when: false
+      tags:
+        - provisioning
+        - vmware
+        - config
+
+    - name: Definir nome da conexao ativa
+      ansible.builtin.set_fact:
+        net_connection: "{{ (nm_connections.stdout_lines | select('search', net_interface) | first).split(':')[0] }}"
+      tags:
+        - provisioning
+        - vmware
+        - config
+
+    - name: "Configurar IP estatico {{ host_ip_target }} na conexao {{ net_connection }}"
+      ansible.builtin.command:
+        cmd: >-
+          nmcli connection modify "{{ net_connection }}"
+          ipv4.addresses "{{ host_ip_target }}/24"
+          ipv4.gateway "192.168.100.1"
+          ipv4.dns "192.168.100.11"
+          ipv4.method manual
+          connection.autoconnect yes
+      changed_when: true
+      tags:
+        - provisioning
+        - vmware
+        - config
+
+    - name: Aplicar configuracao de rede
+      ansible.builtin.command:
+        cmd: "nmcli connection up \"{{ net_connection }}\""
       async: 10
       poll: 0
       changed_when: true
