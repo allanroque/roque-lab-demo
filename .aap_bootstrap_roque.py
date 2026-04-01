@@ -49,7 +49,7 @@ PLAYBOOKS = [
     ("playbooks/linux/adhoc/adhoc_logcollector.yml", "LINUX-ADHOC-LOGCOLLECTOR", "ssh", "linux"),
     ("playbooks/linux/adhoc/adhoc_services_linux.yml", "LINUX-ADHOC-SERVICES", "ssh", "linux"),
     ("playbooks/linux/adhoc/coringa.yml", "LINUX-ADHOC-CORINGA", "ssh", "linux"),
-    ("playbooks/linux/apache/deploy_apache_rhel.yml", "APACHE-DEPLOY-LINUX", "ssh", "linux"),
+    ("playbooks/linux/apache/deploy_apache_rhel.yml", "APACHE-DEPLOY-LINUX-V1", "ssh", "linux"),
     ("playbooks/linux/chrony/config_chrony.yml", "LINUX-CONFIG-CHRONY", "ssh", "linux"),
     ("playbooks/linux/database/create_db_user.yml", "POSTGRES-CREATE-USER", "ssh", "linux"),
     ("playbooks/linux/database/health_check.yml", "POSTGRES-HEALTH-CHECK", "ssh", "linux"),
@@ -283,7 +283,7 @@ def ensure_labels():
 def all_labels_for_jt(jt_name: str, primary: str) -> list[str]:
     """Labels por JT: domínio (linux/dns/…) + config / deploy / database conforme o caso."""
     labs = [primary]
-    if jt_name in ("APACHE-DEPLOY-LINUX", "NGINX-DEPLOY-LINUX"):
+    if jt_name in ("APACHE-DEPLOY-LINUX-V1", "NGINX-DEPLOY-LINUX"):
         labs.append("deploy")
         return labs
     if jt_name in ("POSTGRES-CREATE-USER", "POSTGRES-HEALTH-CHECK"):

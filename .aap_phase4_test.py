@@ -98,7 +98,7 @@ def main():
         (311, "LINUX-CONFIG-MOTD", 1),
         (313, "LINUX-CONFIG-PACKAGES", 1),
         (291, "LINUX-CONFIG-CHRONY", 1),
-        (290, "APACHE-DEPLOY-LINUX", 2),
+        (290, "APACHE-DEPLOY-LINUX-V1", 2),
         (312, "NGINX-DEPLOY-LINUX", 2),
         (315, "LINUX-CONFIG-SERVICES", 2),
         (301, "LINUX-HARDENING", 3),
