@@ -187,18 +187,62 @@
         - provisioning
         - vmware
 
-    # ── Aguardar conectividade ───────────────────────────────────────────────
-    - name: Aguardar SSH estar disponivel em {{ host_ip }} (porta 22)
+    # ── Aguardar VM obter IP via DHCP ───────────────────────────────────────
+    - name: Aguardar VM obter IP via vmrest (DHCP)
+      ansible.builtin.uri:
+        url: "{{ vmrest_base_url }}/vms/{{ vm_id }}/ip"
+        method: GET
+        url_username: "{{ vmrest_user }}"
+        url_password: "{{ vmrest_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: vm_ip_result
+      until: vm_ip_result.status == 200 and vm_ip_result.json.ip | default('') | length > 0
+      retries: 30
+      delay: 10
+      tags:
+        - provisioning
+        - vmware
+
+    - name: Registrar IP temporario (DHCP) da VM
+      ansible.builtin.set_fact:
+        vm_dhcp_ip: "{{ vm_ip_result.json.ip }}"
+      tags:
+        - provisioning
+        - vmware
+
+    - name: Exibir IP temporario da VM
+      ansible.builtin.debug:
+        msg: "VM {{ host_fqdn }} obteve IP via DHCP: {{ vm_dhcp_ip }}"
+      tags:
+        - provisioning
+        - vmware
+
+    # ── Aguardar SSH no IP DHCP ──────────────────────────────────────────────
+    - name: Aguardar SSH estar disponivel em {{ vm_dhcp_ip }} (porta 22)
       ansible.builtin.wait_for:
-        host: "{{ host_ip }}"
+        host: "{{ vm_dhcp_ip }}"
         port: 22
-        timeout: 300
-        delay: 15
+        timeout: 120
+        delay: 5
         state: started
       tags:
         - provisioning
         - vmware
         - validate
+
+    # ── Adicionar VM ao inventario dinamico para configuracao ────────────────
+    - name: Adicionar VM ao inventario temporario
+      ansible.builtin.add_host:
+        name: "{{ vm_dhcp_ip }}"
+        groups: vm_newly_provisioned
+        ansible_user: ansible
+        host_fqdn: "{{ host_fqdn }}"
+        host_ip_target: "{{ host_ip }}"
+        host_name_short: "{{ host_name.split('.')[0] }}"
+      tags:
+        - provisioning
+        - vmware
 
     # ── Coletar detalhes confirmados da VM ───────────────────────────────────
     - name: Consultar configuracao final da VM
@@ -228,8 +272,114 @@
         - provisioning
         - vmware
 
-    # ── Resumo ───────────────────────────────────────────────────────────────
+    # ── Resumo parcial (pre-configuracao) ────────────────────────────────────
     - name: Exibir resumo do provisionamento
+      ansible.builtin.debug:
+        msg:
+          - "================================================"
+          - " VM Provisionada — Aguardando configuracao"
+          - "================================================"
+          - " FQDN        : {{ host_fqdn }}"
+          - " IP DHCP     : {{ vm_dhcp_ip }}"
+          - " IP Target   : {{ host_ip }}"
+          - " Role        : {{ host_role }}"
+          - " Group       : {{ host_group }}"
+          - " vCPUs       : {{ vm_details.json.cpu.processors | default(host_cpus) }}"
+          - " RAM         : {{ vm_details.json.memory | default(host_memory_mb) }} MB"
+          - " VM ID       : {{ vm_id }}"
+          - "================================================"
+      tags:
+        - provisioning
+        - vmware
+
+# ── Play 2: Configurar hostname e IP estatico na VM ──────────────────────────
+- name: Configurar hostname e IP estatico na VM provisionada
+  hosts: vm_newly_provisioned
+  gather_facts: true
+  become: true
+
+  tasks:
+    - name: Configurar hostname
+      ansible.builtin.hostname:
+        name: "{{ host_fqdn }}"
+      tags:
+        - provisioning
+        - vmware
+        - config
+
+    - name: Detectar nome da interface de rede principal
+      ansible.builtin.set_fact:
+        net_interface: "{{ ansible_default_ipv4.interface }}"
+      tags:
+        - provisioning
+        - vmware
+        - config
+
+    - name: Configurar IP estatico via nmcli
+      community.general.nmcli:
+        conn_name: "{{ net_interface }}"
+        ifname: "{{ net_interface }}"
+        type: ethernet
+        ip4: "{{ host_ip_target }}/24"
+        gw4: "192.168.100.1"
+        dns4:
+          - "192.168.100.11"
+        method4: manual
+        state: present
+        autoconnect: true
+      notify: Reiniciar interface de rede
+      tags:
+        - provisioning
+        - vmware
+        - config
+
+    - name: Forcar aplicacao da configuracao de rede
+      ansible.builtin.meta: flush_handlers
+
+    - name: Aguardar SSH no IP estatico {{ host_ip_target }}
+      ansible.builtin.wait_for:
+        host: "{{ host_ip_target }}"
+        port: 22
+        timeout: 120
+        delay: 5
+        state: started
+      delegate_to: localhost
+      become: false
+      tags:
+        - provisioning
+        - vmware
+        - validate
+
+    - name: Exibir configuracao concluida
+      ansible.builtin.debug:
+        msg: "VM {{ host_fqdn }} configurada com IP {{ host_ip_target }} — SSH OK"
+      delegate_to: localhost
+      become: false
+      tags:
+        - provisioning
+        - vmware
+
+  handlers:
+    - name: Reiniciar interface de rede
+      community.general.nmcli:
+        conn_name: "{{ net_interface }}"
+        state: present
+        autoconnect: true
+
+# ── Play 3: Exportar dados para workflow ──────────────────────────────────────
+- name: Exportar dados do provisionamento para workflow
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Registrar timestamp do provisionamento
+      ansible.builtin.set_fact:
+        provisioned_at: "{{ lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') }}"
+      tags:
+        - provisioning
+        - vmware
+
+    - name: Exibir resumo final
       ansible.builtin.debug:
         msg:
           - "================================================"
@@ -244,13 +394,13 @@
           - "   Descricao    : {{ host_description }}"
           - "------------------------------------------------"
           - " Recursos"
-          - "   vCPUs        : {{ vm_details.json.cpu.processors | default(host_cpus) }}"
-          - "   RAM          : {{ vm_details.json.memory | default(host_memory_mb) }} MB"
+          - "   vCPUs        : {{ host_cpus }}"
+          - "   RAM          : {{ host_memory_mb }} MB"
           - "   Disk         : {{ host_disk | default('N/A') }}"
           - "------------------------------------------------"
           - " VM"
           - "   ID           : {{ vm_id }}"
-          - "   Path         : {{ vm_path }}"
+          - "   VM Path      : {{ vm_path }}"
           - "   Platform     : vmware_fusion"
           - "   Hypervisor   : {{ vmrest_host }}"
           - "   Provisioned  : {{ provisioned_at }}"
@@ -260,7 +410,6 @@
         - provisioning
         - vmware
 
-    # ── Exportar para workflow (IPAM, DNS, Inventario, ServiceNow) ───────────
     - name: Exportar dados para proximo job template
       ansible.builtin.set_stats:
         data:
@@ -272,8 +421,8 @@
           host_role: "{{ host_role }}"
           host_group: "{{ host_group }}"
           host_env: "{{ host_env }}"
-          host_cpus: "{{ vm_details.json.cpu.processors | default(host_cpus) }}"
-          host_memory_mb: "{{ vm_details.json.memory | default(host_memory_mb) }}"
+          host_cpus: "{{ host_cpus }}"
+          host_memory_mb: "{{ host_memory_mb }}"
           host_disk: "{{ host_disk }}"
           vm_id: "{{ vm_id }}"
           vm_path: "{{ vm_path }}"
@@ -289,8 +438,8 @@
             | Role: {{ host_role }}
             | Group: {{ host_group }}
             | Environment: {{ host_env }}
-            | vCPUs: {{ vm_details.json.cpu.processors | default(host_cpus) }}
-            | RAM: {{ vm_details.json.memory | default(host_memory_mb) }} MB
+            | vCPUs: {{ host_cpus }}
+            | RAM: {{ host_memory_mb }} MB
             | Disk: {{ host_disk | default('N/A') }}
             | Platform: vmware_fusion
             | Hypervisor: {{ vmrest_host }}
