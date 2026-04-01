@@ -199,6 +199,24 @@
         - aws
         - ec2
 
+    # ── Garantir tags em instancias existentes ─────────────────────────────
+    - name: "Garantir tags na instancia {{ ec2_server_name }}{{ item.item }}"
+      amazon.aws.ec2_tag:
+        region: "{{ aws_region }}"
+        resource: "{{ item.instances[0].instance_id }}"
+        tags: "{{ common_tags | combine({
+          'Name': ec2_server_name ~ item.item,
+          'Role': ec2_server_role,
+          'Group': ec2_server_group
+          }) }}"
+        state: present
+      loop: "{{ ec2_results.results }}"
+      loop_control:
+        label: "{{ ec2_server_name }}{{ item.item }}"
+      tags:
+        - aws
+        - ec2
+
     # ── Coletar info ─────────────────────────────────────────────────────────
     - name: Coletar informacoes das instancias
       ansible.builtin.set_fact:

@@ -317,21 +317,6 @@ def find_project(name: str):
     return r["results"][0]["id"] if r["count"] else None
 
 
-def ensure_inventory(name: str, description: str) -> int:
-    r = api("GET", f"/inventories/?organization={ORG_ID}&name={name}")
-    if r["count"]:
-        iid = r["results"][0]["id"]
-        print(f"Inventário {name} id={iid}")
-        return iid
-    p = api(
-        "POST",
-        "/inventories/",
-        {"name": name, "description": description, "organization": ORG_ID},
-    )
-    print(f"Criado inventário {name} id={p['id']}")
-    return p["id"]
-
-
 def ensure_label(name: str) -> int:
     r = api("GET", f"/labels/?organization={ORG_ID}&name={name}")
     if r["count"]:
@@ -502,10 +487,7 @@ def main():
     print("=== 1) Renomear APACHE RHEL → APACHE-DEPLOY-LINUX-V1 ===")
     rename_apache_v1()
 
-    print("=== 2) Inventário INV-AWS-ROQUE ===")
-    inv_aws = ensure_inventory("INV-AWS-ROQUE", "Alvos EC2 / apps AWS (org ROQUE)")
-
-    print("=== 3) Projetos SCM ===")
+    print("=== 2) Projetos SCM (inventário: INV-ROQUE-LAB) ===")
     aws_pid = ensure_aws_project()
     dr_pid = ensure_dr_project()
 
@@ -514,7 +496,7 @@ def main():
     label_deploy = ensure_label("deploy")
     label_linux = ensure_label("linux")
 
-    print("=== 4) Job templates (PROJ-GIT-AWS-ROQUE) ===")
+    print("=== 3) Job templates (PROJ-GIT-AWS-ROQUE) ===")
     jt_ids = {}
 
     jt_ids["AWS-PROVISION-INFRA"] = upsert_jt(
@@ -554,7 +536,7 @@ def main():
         aws_pid,
         "POSTGRES-DEPLOY-LINUX",
         "playbooks/configure-postgres.yml",
-        inv_aws,
+        INV_LAB,
         EE_ROQUE_CLOUD,
         True,
         [CRED_SSH_AWS],
@@ -565,7 +547,7 @@ def main():
         aws_pid,
         "APACHE-DEPLOY-LINUX",
         "playbooks/configure-apache.yml",
-        inv_aws,
+        INV_LAB,
         EE_ROQUE_CLOUD,
         True,
         [CRED_SSH_AWS],
@@ -587,19 +569,19 @@ def main():
         aws_pid,
         "DEPLOY-APP-LINUX",
         "playbooks/configure-app.yml",
-        inv_aws,
+        INV_LAB,
         EE_ROQUE_CLOUD,
         True,
         [CRED_SSH_AWS],
         [label_deploy, label_linux],
     )
 
-    print("=== 5) DEPLOY-NODEJS-LINUX (PROJ-GIT-DR-ROQUE) ===")
+    print("=== 4) DEPLOY-NODEJS-LINUX (PROJ-GIT-DR-ROQUE) ===")
     body_node = {
         "name": "DEPLOY-NODEJS-LINUX",
         "description": "Espelho SRE NODEJS-DEPLOY-LINUX (deploy-backend.yml)",
         "job_type": "run",
-        "inventory": inv_aws,
+        "inventory": INV_LAB,
         "project": dr_pid,
         "playbook": "deploy-backend.yml",
         "verbosity": 1,
@@ -622,7 +604,7 @@ def main():
         associate_label(nj, lid)
     jt_ids["DEPLOY-NODEJS-LINUX"] = nj
 
-    print("=== 6) Workflows ===")
+    print("=== 5) Workflows ===")
     full_chain = [
         "AWS-PROVISION-INFRA",
         "AWS-PROVISION-EC2",
@@ -635,7 +617,7 @@ def main():
     create_workflow("WF-AWS-FULL-DEPLOYMENT", jt_ids, full_chain)
     create_workflow("WF-AWS-TEARDOWN-CLEANUP", jt_ids, ["AWS-TEARDOWN"])
 
-    print("=== 7) Labels cloud nos workflows AWS ===")
+    print("=== 6) Labels cloud nos workflows AWS ===")
     for wf_name in ("WF-AWS-FULL-DEPLOYMENT", "WF-AWS-TEARDOWN-CLEANUP"):
         wfid = wf_exists(wf_name)
         if wfid:

@@ -248,6 +248,14 @@ def find_or_create_inventory():
         gid = p["id"]
         print(f"Created group id={gid}")
 
+    for gname in ("nginx", "apache", "postgresql", "infra-3-tier"):
+        r = api("GET", f"/groups/?inventory={inv}&name={gname}")
+        if r["count"]:
+            print(f"Group {gname} exists id={r['results'][0]['id']}")
+        else:
+            p = api("POST", "/groups/", {"name": gname, "inventory": inv})
+            print(f"Created group {gname} id={p['id']}")
+
     for hid in host_ids:
         try:
             api("POST", f"/groups/{gid}/hosts/", {"id": hid})
