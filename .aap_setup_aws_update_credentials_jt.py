@@ -271,12 +271,14 @@ def main():
     print("=== Labels ===")
     lbl_aws_sre = ensure_label(ORG_SRE, "aws")
     lbl_cfg_sre = ensure_label(ORG_SRE, "config")
+    lbl_cloud_sre = ensure_label(ORG_SRE, "cloud")
     lbl_aws_r = ensure_label(ORG_ROQUE, "aws")
     lbl_cfg_r = ensure_label(ORG_ROQUE, "config")
+    lbl_cloud_r = ensure_label(ORG_ROQUE, "cloud")
 
     print("=== Job Templates ===")
-    jt_sre = upsert_jt(proj_sre, 21, cred_sre, [lbl_aws_sre, lbl_cfg_sre])
-    jt_roque = upsert_jt(proj_roque, 26, cred_roque, [lbl_aws_r, lbl_cfg_r])
+    jt_sre = upsert_jt(proj_sre, 21, cred_sre, [lbl_aws_sre, lbl_cfg_sre, lbl_cloud_sre])
+    jt_roque = upsert_jt(proj_roque, 26, cred_roque, [lbl_aws_r, lbl_cfg_r, lbl_cloud_r])
 
     print("=== OK ===")
     print(f"  SRE:  JT id={jt_sre}  CRED-AAP-SRE id={cred_sre}  projeto id={proj_sre}  inv=INV-SRE-LAB (21)")

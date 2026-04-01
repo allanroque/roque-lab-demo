@@ -407,6 +407,13 @@ def associate_label(jt_id: int, label_id: int):
         pass
 
 
+def associate_wf_label(wf_id: int, label_id: int):
+    try:
+        api("POST", f"/workflow_job_templates/{wf_id}/labels/", {"id": label_id})
+    except urllib.error.HTTPError:
+        pass
+
+
 def upsert_jt(
     project_id: int,
     name: str,
@@ -503,6 +510,7 @@ def main():
     dr_pid = ensure_dr_project()
 
     label_aws = ensure_label("aws")
+    label_cloud = ensure_label("cloud")
     label_deploy = ensure_label("deploy")
     label_linux = ensure_label("linux")
 
@@ -517,7 +525,7 @@ def main():
         EE_TERRAFORM,
         False,
         [CRED_AWS],
-        [label_aws],
+        [label_aws, label_cloud],
     )
 
     jt_ids["AWS-PROVISION-EC2"] = upsert_jt(
@@ -528,7 +536,7 @@ def main():
         EE_TERRAFORM,
         False,
         [CRED_AWS, CRED_SSH_AWS],
-        [label_aws],
+        [label_aws, label_cloud],
     )
 
     jt_ids["AWS-TEARDOWN"] = upsert_jt(
@@ -539,7 +547,7 @@ def main():
         EE_CP,
         False,
         [CRED_AWS],
-        [label_aws],
+        [label_aws, label_cloud],
     )
 
     jt_ids["POSTGRES-DEPLOY-LINUX"] = upsert_jt(
@@ -550,7 +558,7 @@ def main():
         EE_TERRAFORM,
         True,
         [CRED_SSH_AWS],
-        [label_aws, label_deploy, label_linux],
+        [label_aws, label_cloud, label_deploy, label_linux],
     )
 
     jt_ids["APACHE-DEPLOY-LINUX"] = upsert_jt(
@@ -561,7 +569,7 @@ def main():
         EE_TERRAFORM,
         True,
         [CRED_SSH_AWS],
-        [label_aws, label_deploy, label_linux],
+        [label_aws, label_cloud, label_deploy, label_linux],
     )
 
     jt_ids["DEPLOY-NGINX-LINUX"] = upsert_jt(
@@ -572,7 +580,7 @@ def main():
         EE_TERRAFORM,
         True,
         [CRED_SSH_AWS],
-        [label_aws, label_deploy, label_linux],
+        [label_aws, label_cloud, label_deploy, label_linux],
     )
 
     jt_ids["DEPLOY-APP-LINUX"] = upsert_jt(
@@ -583,7 +591,7 @@ def main():
         EE_TERRAFORM,
         True,
         [CRED_SSH_AWS],
-        [label_aws, label_deploy, label_linux],
+        [label_aws, label_cloud, label_deploy, label_linux],
     )
 
     print("=== 5) DEPLOY-NODEJS-LINUX (PROJ-GIT-DR-ROQUE) ===")
@@ -610,7 +618,7 @@ def main():
         nj = p["id"]
         print(f"  Criado DEPLOY-NODEJS-LINUX id={nj}")
     associate_cred(nj, CRED_SSH_AWS)
-    for lid in (label_aws, label_deploy, label_linux):
+    for lid in (label_aws, label_cloud, label_deploy, label_linux):
         associate_label(nj, lid)
     jt_ids["DEPLOY-NODEJS-LINUX"] = nj
 
@@ -626,6 +634,13 @@ def main():
     ]
     create_workflow("WF-AWS-FULL-DEPLOYMENT", jt_ids, full_chain)
     create_workflow("WF-AWS-TEARDOWN-CLEANUP", jt_ids, ["AWS-TEARDOWN"])
+
+    print("=== 7) Labels cloud nos workflows AWS ===")
+    for wf_name in ("WF-AWS-FULL-DEPLOYMENT", "WF-AWS-TEARDOWN-CLEANUP"):
+        wfid = wf_exists(wf_name)
+        if wfid:
+            associate_wf_label(wfid, label_aws)
+            associate_wf_label(wfid, label_cloud)
 
     print("=== Concluído ===")
     for k, v in jt_ids.items():

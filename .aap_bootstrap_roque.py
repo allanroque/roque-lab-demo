@@ -267,6 +267,8 @@ def ensure_labels():
         "config",
         "deploy",
         "database",
+        "aws",
+        "cloud",
     ]
     label_map = {}
     for name in names:
