@@ -1,0 +1,44 @@
+---
+# Playbook: Configure SELinux Settings
+# Variables:
+#   selinux_policy: string - SELinux policy type (default: targeted)
+#   selinux_state:  string - SELinux state (default: enforcing)
+- name: Configure SELinux Settings
+  hosts: all
+  become: true
+
+  vars:
+    selinux_policy: targeted
+    selinux_state: enforcing
+
+  tasks:
+    - name: Enable SELinux with targeted policy
+      ansible.posix.selinux:
+        policy: "{{ selinux_policy }}"
+        state: "{{ selinux_state }}"
+      tags:
+        - selinux
+        - security
+
+    - name: Verify SELinux status
+      ansible.builtin.command: getenforce
+      register: selinux_status
+      changed_when: false
+      tags:
+        - selinux
+        - verify
+
+    - name: Show SELinux status
+      ansible.builtin.debug:
+        msg: "The SELinux status is {{ selinux_status.stdout }}"
+      tags:
+        - selinux
+        - verify
+
+    - name: Set Job ID number for AAP callback
+      ansible.builtin.set_stats:
+        data:
+          ac_job_id: "{{ awx_job_id | default('0') }}"
+      tags:
+        - selinux
+        - callback

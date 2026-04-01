@@ -1,0 +1,31 @@
+---
+# Playbook: Execute a command from a variable
+# Variables (suitable for AAP Survey):
+#   my_command: string - Command to execute on target hosts (default: "echo Test Ansible Command!")
+#
+# WARNING: This playbook uses ansible.builtin.command as a generic executor.
+# Prefer using specific Ansible modules whenever possible.
+- name: Execute a command from a variable
+  hosts: all
+  gather_facts: false
+
+  vars:
+    my_command: "echo Test Ansible Command!"
+
+  tasks:
+    - name: Execute command provided via variable
+      ansible.builtin.command:
+        cmd: "{{ my_command }}"
+      register: command_output
+      changed_when: false
+      failed_when: command_output.rc != 0
+      tags:
+        - adhoc
+        - command
+
+    - name: Show command output
+      ansible.builtin.debug:
+        msg: "Output: {{ command_output.stdout }}"
+      tags:
+        - adhoc
+        - command

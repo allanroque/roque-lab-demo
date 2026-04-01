@@ -1,0 +1,77 @@
+---
+# Playbook: Instalar e configurar agentes de virtualização (QEMU e VMware)
+# Variables (AAP Survey):
+#   - (none required - auto-detects virtualization type)
+# Tags: virtualization, qemu, vmware
+
+- name: Instalar e configurar agentes de virtualização (QEMU e VMware)
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Instalar QEMU Guest Agent se for KVM
+      ansible.builtin.dnf:
+        name: qemu-guest-agent
+        state: present
+      when: ansible_virtualization_type == "kvm"
+      tags:
+        - virtualization
+        - qemu
+
+    - name: Ativar e iniciar qemu-guest-agent se for KVM
+      ansible.builtin.systemd:
+        name: qemu-guest-agent
+        state: started
+        enabled: true
+        daemon_reload: true
+      when: ansible_virtualization_type == "kvm"
+      tags:
+        - virtualization
+        - qemu
+
+    - name: Instalar open-vm-tools se for VMware
+      ansible.builtin.dnf:
+        name: open-vm-tools
+        state: present
+      when: ansible_virtualization_type == "VMware"
+      tags:
+        - virtualization
+        - vmware
+
+    - name: Ativar e iniciar open-vm-tools se for VMware
+      ansible.builtin.systemd:
+        name: vmtoolsd
+        state: started
+        enabled: true
+        daemon_reload: true
+      when: ansible_virtualization_type == "VMware"
+      tags:
+        - virtualization
+        - vmware
+
+    - name: Coletar fatos dos serviços
+      ansible.builtin.service_facts:
+      tags:
+        - virtualization
+
+    - name: Exibir status do agente de virtualização
+      ansible.builtin.debug:
+        msg: >-
+          {{
+            'QEMU Guest Agent is ' ~ (
+              'running'
+              if ('qemu-guest-agent.service' in services and
+                  services['qemu-guest-agent.service'].status == 'running')
+              else 'stopped or not installed'
+            )
+            if ansible_virtualization_type == "kvm"
+            else 'VMware Tools (vmtoolsd) is ' ~ (
+              'running'
+              if ('vmtoolsd.service' in services and
+                  services['vmtoolsd.service'].status == 'running')
+              else 'stopped or not installed'
+            )
+          }}
+      tags:
+        - virtualization

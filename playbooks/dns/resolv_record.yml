@@ -1,0 +1,68 @@
+---
+# =============================================================================
+# Playbook: Testar resolucao DNS (direta e reversa)
+# Descricao: Realiza consulta DNS direta (hostname -> IP) e reversa (IP -> hostname)
+#            para validar que os registros estao corretos.
+#
+# Variaveis para Survey do AAP:
+#   host_name  - FQDN do host a resolver (ex: web02.aroque.com.br) [obrigatorio]
+#   dns_server - IP do servidor DNS (default: 192.168.100.11)
+# =============================================================================
+- name: Testar resolucao DNS - direta e reversa
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    host_name: ""
+    dns_server: "192.168.100.11"
+
+  tasks:
+    - name: Validar que host_name foi informado
+      ansible.builtin.assert:
+        that:
+          - host_name | length > 0
+        fail_msg: "A variavel host_name e obrigatoria"
+        quiet: true
+      tags:
+        - validacao
+        - dns
+
+    - name: Resolver hostname via DNS direto
+      ansible.builtin.set_fact:
+        resolved_ip: "{{ lookup('community.general.dig', host_name, '@' + dns_server) }}"
+      tags:
+        - dns
+        - resolucao
+
+    - name: Exibir resultado da resolucao direta
+      ansible.builtin.debug:
+        msg: "Hostname {{ host_name }} resolvido para '{{ resolved_ip }}'"
+      tags:
+        - dns
+        - debug
+
+    - name: Falhar se DNS direto nao resolveu o hostname
+      ansible.builtin.fail:
+        msg: "DNS nao resolveu o hostname {{ host_name }} no servidor {{ dns_server }}"
+      when: resolved_ip | trim == ""
+      tags:
+        - dns
+        - validacao
+
+    - name: Resolver IP via DNS reverso
+      # Usando command pois nao existe modulo Ansible nativo para consulta DNS reversa
+      ansible.builtin.command:
+        cmd: "dig -x {{ resolved_ip }} @{{ dns_server }} +short"
+      register: dig_reverse_result
+      changed_when: false
+      failed_when: false
+      tags:
+        - dns
+        - resolucao
+
+    - name: Exibir resultado da resolucao reversa
+      ansible.builtin.debug:
+        msg: "IP {{ resolved_ip }} resolvido para '{{ dig_reverse_result.stdout | default('') | trim }}'"
+      tags:
+        - dns
+        - debug

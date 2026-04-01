@@ -1,0 +1,42 @@
+---
+# Playbook: Coleta de variáveis e configuração do Ansible em execução
+# Variables (AAP Survey):
+#   - (none required)
+# Tags: debug, ansible_config
+
+- name: Coleta de variáveis e configuração do Ansible em execução
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  tasks:
+    - name: Mostrar config ativa do ansible (apenas alteradas)
+      ansible.builtin.command: ansible-config dump --only-changed
+      register: cfg
+      changed_when: false
+      tags:
+        - debug
+        - ansible_config
+
+    - name: Exibir config alterada do Ansible
+      ansible.builtin.debug:
+        var: cfg.stdout_lines
+      tags:
+        - debug
+        - ansible_config
+
+    - name: Mostrar config completa do Ansible
+      ansible.builtin.command: ansible-config dump
+      register: cfg_full
+      changed_when: false
+      tags:
+        - debug
+        - ansible_config
+
+    - name: Exibir config completa
+      ansible.builtin.debug:
+        var: cfg_full.stdout_lines
+      when: cfg_full is defined
+      tags:
+        - debug
+        - ansible_config

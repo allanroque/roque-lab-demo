@@ -1,0 +1,130 @@
+---
+# Playbook: Deploy Apache Web Server
+# Descricao: Instala e configura Apache HTTP Server no RHEL
+# Variaveis Survey AAP:
+#   - apache_test_message: Mensagem de teste exibida na pagina
+- name: Deploy Apache Web Server no RHEL
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    apache_test_message: "Apache Test Message"
+    http_url: "http://{{ ansible_fqdn | default(inventory_hostname) }}"
+
+  tasks:
+    - name: Instalar versao mais recente do Apache
+      ansible.builtin.dnf:
+        name: httpd
+        state: present
+      tags:
+        - apache
+        - install
+
+    - name: Instalar versao mais recente do firewalld
+      ansible.builtin.dnf:
+        name: firewalld
+        state: present
+      tags:
+        - apache
+        - firewall
+
+    - name: Garantir firewalld habilitado e em execucao
+      ansible.builtin.service:
+        name: firewalld
+        enabled: true
+        state: started
+      tags:
+        - apache
+        - firewall
+
+    - name: Permitir servico HTTP no firewalld
+      ansible.posix.firewalld:
+        service: http
+        permanent: true
+        state: enabled
+        immediate: true
+      tags:
+        - apache
+        - firewall
+
+    - name: Copiar configuracao do Apache (httpd.conf)
+      ansible.builtin.copy:
+        src: httpd.conf
+        dest: /etc/httpd/conf/httpd.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reiniciar Apache
+      tags:
+        - apache
+        - config
+
+    - name: Copiar logo do Ansible para web root
+      ansible.builtin.copy:
+        src: logo-rh-ansible-automation.png
+        dest: /var/www/html/logo-rh-ansible-automation.png
+        owner: root
+        group: root
+        mode: "0644"
+      tags:
+        - apache
+        - config
+
+    - name: Fazer deploy do index.html via template
+      ansible.builtin.template:
+        src: index.html.j2
+        dest: /var/www/html/index.html
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reiniciar Apache
+      tags:
+        - apache
+        - config
+
+    - name: Garantir Apache habilitado e em execucao
+      ansible.builtin.service:
+        name: httpd
+        enabled: true
+        state: started
+      tags:
+        - apache
+
+    - name: Validar pagina web com teste HTTP
+      ansible.builtin.uri:
+        url: "{{ http_url }}"
+        return_content: false
+        status_code: 200
+      register: result
+      tags:
+        - apache
+        - validate
+
+    - name: Exibir resultado do teste HTTP
+      ansible.builtin.debug:
+        msg: "O retorno do link foi {{ result.status }}"
+      tags:
+        - apache
+        - validate
+
+    - name: Falhar se retorno HTTP nao for 200
+      ansible.builtin.fail:
+        msg: "HTTP return code is not 200"
+      when: result.status != 200
+      tags:
+        - apache
+        - validate
+
+    - name: Exibir URL de acesso a pagina
+      ansible.builtin.debug:
+        msg: "{{ http_url }}"
+      tags:
+        - apache
+        - validate
+
+  handlers:
+    - name: Reiniciar Apache
+      ansible.builtin.service:
+        name: httpd
+        state: restarted

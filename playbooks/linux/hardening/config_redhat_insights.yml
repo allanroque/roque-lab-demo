@@ -1,0 +1,34 @@
+---
+# Playbook: Configure Red Hat Insights
+# Variables (AAP Survey):
+#   - (none required)
+# Tags: insights
+
+- name: Configure Red Hat Insights
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Register the system to Red Hat Insights
+      ansible.builtin.command: insights-client --register
+      register: insights_registration
+      changed_when: "'Successfully registered' in insights_registration.stdout"
+      ignore_errors: true
+      async: 120
+      poll: 0
+      tags:
+        - insights
+
+    - name: Verify Insights registration status
+      ansible.builtin.command: insights-client --status
+      register: insights_status
+      changed_when: false
+      tags:
+        - insights
+
+    - name: Show registration status
+      ansible.builtin.debug:
+        msg: "{{ insights_status.stdout_lines }}"
+      tags:
+        - insights

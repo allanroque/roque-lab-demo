@@ -1,0 +1,73 @@
+---
+# ============================================================
+# Configuração do serviço Chrony (NTP)
+# ============================================================
+# Variáveis para Survey do AAP:
+#   chrony_package: Nome do pacote chrony (default: chrony)
+#   chrony_service: Nome do serviço chronyd (default: chronyd)
+# ============================================================
+- name: Configuração do chrony
+  hosts: all
+  become: true
+  ignore_unreachable: true
+  gather_facts: false
+
+  vars:
+    chrony_package: chrony
+    chrony_service: chronyd
+
+  tasks:
+    - name: Instalar pacote do chrony
+      ansible.builtin.package:
+        name: "{{ chrony_package }}"
+        state: present
+      tags:
+        - chrony
+        - install
+
+    - name: Copiar arquivo de configuração do chrony
+      ansible.builtin.copy:
+        src: files/chrony.conf
+        dest: /etc/chrony.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reiniciar serviço do chrony
+      tags:
+        - chrony
+        - config
+
+    - name: Garantir serviço do chrony habilitado e iniciado
+      ansible.builtin.service:
+        name: "{{ chrony_service }}"
+        state: started
+        enabled: true
+      tags:
+        - chrony
+        - service
+
+    - name: Validar horário do servidor com chronyc tracking
+      ansible.builtin.command:
+        cmd: chronyc tracking
+      register: chronyc_result
+      changed_when: false
+      failed_when: false
+      when: not ansible_check_mode
+      tags:
+        - chrony
+        - validate
+
+    - name: Exibir resultado da validação de horário
+      ansible.builtin.debug:
+        var: chronyc_result.stdout_lines
+      when:
+        - chronyc_result is defined
+      tags:
+        - chrony
+        - validate
+
+  handlers:
+    - name: Reiniciar serviço do chrony
+      ansible.builtin.service:
+        name: "{{ chrony_service }}"
+        state: restarted

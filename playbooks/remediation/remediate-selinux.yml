@@ -1,0 +1,78 @@
+---
+# =========================================================================
+# Playbook: Remediacao - SELinux desabilitado
+# =========================================================================
+# Variaveis para AAP Survey:
+#   target_host  - Host ou grupo alvo (default: target)
+# =========================================================================
+- name: Remediacao - Reativar SELinux em modo enforcing
+  hosts: "{{ target_host | default('target') }}"
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Verificar status atual do SELinux
+      ansible.builtin.command: getenforce
+      register: selinux_status_before
+      changed_when: false
+      tags:
+        - remediation
+        - selinux
+        - check
+
+    - name: Exibir status atual do SELinux
+      ansible.builtin.debug:
+        msg: "Current SELinux status: {{ selinux_status_before.stdout }}"
+      tags:
+        - remediation
+        - selinux
+        - debug
+
+    - name: Ativar SELinux em modo enforcing via modulo
+      ansible.posix.selinux:
+        state: enforcing
+        policy: targeted
+      register: selinux_change
+      ignore_errors: true
+      tags:
+        - remediation
+        - selinux
+        - enforce
+
+    - name: Avisar sobre falha na ativacao do SELinux
+      ansible.builtin.debug:
+        msg: "Warning: SELinux enforcement may have failed - SELinux might be fully disabled in kernel"
+      when: selinux_change is failed
+      tags:
+        - remediation
+        - selinux
+        - debug
+
+    - name: Verificar status do SELinux apos remediacao
+      ansible.builtin.command: getenforce
+      register: selinux_status_after
+      changed_when: false
+      tags:
+        - remediation
+        - selinux
+        - check
+
+    - name: Exibir status do SELinux apos remediacao
+      ansible.builtin.debug:
+        msg: "SELinux status after change: {{ selinux_status_after.stdout }}"
+      tags:
+        - remediation
+        - selinux
+        - debug
+
+    - name: Exibir relatorio de remediacao SELinux
+      ansible.builtin.debug:
+        msg:
+          - "=== SELINUX REMEDIATION REPORT ==="
+          - "Status before: {{ selinux_status_before.stdout }}"
+          - "Status after: {{ selinux_status_after.stdout }}"
+          - "Remediation applied: {{ selinux_status_after.stdout == 'Enforcing' }}"
+      tags:
+        - remediation
+        - selinux
+        - report

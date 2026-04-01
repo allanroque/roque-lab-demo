@@ -1,0 +1,134 @@
+---
+# Playbook: Instalar e iniciar node_exporter em hosts Linux
+# Variables (AAP Survey):
+#   - node_exporter_version: versão do node_exporter (default: "1.8.1")
+#   - node_exporter_user: usuário do serviço (default: "nodeusr")
+#   - node_exporter_port: porta de escuta (default: 9100)
+# Tags: node_exporter, monitoring, firewall
+
+- name: Instalar e iniciar node_exporter em hosts Linux
+  hosts: LINUX
+  become: true
+  gather_facts: true
+
+  vars:
+    node_exporter_version: "1.8.1"
+    node_exporter_user: "nodeusr"
+    node_exporter_port: 9100
+    node_exporter_install_dir: /usr/local/bin
+    node_exporter_temp_dir: /tmp/node_exporter_extract
+
+  tasks:
+    - name: Garantir que diretório de instalação exista
+      ansible.builtin.file:
+        path: "{{ node_exporter_install_dir }}"
+        state: directory
+        mode: "0755"
+      tags:
+        - node_exporter
+
+    - name: Criar usuário do node_exporter
+      ansible.builtin.user:
+        name: "{{ node_exporter_user }}"
+        shell: /sbin/nologin
+        system: true
+        create_home: false
+      tags:
+        - node_exporter
+
+    - name: Definir sufixo da arquitetura
+      ansible.builtin.set_fact:
+        arch_suffix: >-
+          {{ 'linux-arm64' if ansible_architecture == 'aarch64'
+             else 'linux-amd64' if ansible_architecture == 'x86_64'
+             else 'unsupported' }}
+      tags:
+        - node_exporter
+
+    - name: Abortar se a arquitetura não for suportada
+      ansible.builtin.fail:
+        msg: "Arquitetura '{{ ansible_architecture }}' não é suportada."
+      when: arch_suffix == 'unsupported'
+      tags:
+        - node_exporter
+
+    - name: Criar diretório temporário de extração
+      ansible.builtin.file:
+        path: "{{ node_exporter_temp_dir }}"
+        state: directory
+        mode: "0755"
+      tags:
+        - node_exporter
+
+    - name: Baixar tarball do node_exporter
+      ansible.builtin.get_url:
+        url: >-
+          https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.{{ arch_suffix }}.tar.gz
+        dest: "/tmp/node_exporter.tar.gz"
+        mode: "0644"
+      tags:
+        - node_exporter
+
+    - name: Descompactar tarball
+      ansible.builtin.unarchive:
+        src: "/tmp/node_exporter.tar.gz"
+        dest: "{{ node_exporter_temp_dir }}"
+        remote_src: true
+      tags:
+        - node_exporter
+
+    - name: Copiar binário para diretório de instalação
+      ansible.builtin.copy:
+        src: "{{ node_exporter_temp_dir }}/node_exporter-{{ node_exporter_version }}.{{ arch_suffix }}/node_exporter"
+        dest: "{{ node_exporter_install_dir }}/node_exporter"
+        mode: "0755"
+        remote_src: true
+      tags:
+        - node_exporter
+
+    - name: Criar serviço systemd para node_exporter
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/node_exporter.service
+        content: |
+          [Unit]
+          Description=Prometheus Node Exporter
+          After=network.target
+
+          [Service]
+          User={{ node_exporter_user }}
+          Group={{ node_exporter_user }}
+          Type=simple
+          ExecStart={{ node_exporter_install_dir }}/node_exporter \
+            --web.listen-address=:{{ node_exporter_port }}
+
+          [Install]
+          WantedBy=multi-user.target
+        mode: "0644"
+      tags:
+        - node_exporter
+
+    - name: Reload systemd daemon
+      ansible.builtin.systemd:
+        daemon_reload: true
+      tags:
+        - node_exporter
+
+    - name: Abrir porta do node_exporter no firewall
+      ansible.posix.firewalld:
+        port: "{{ node_exporter_port }}/tcp"
+        permanent: true
+        state: enabled
+        immediate: true
+      failed_when: false
+      tags:
+        - node_exporter
+        - firewall
+
+    - name: Ativar e iniciar node_exporter
+      ansible.builtin.systemd:
+        name: node_exporter
+        enabled: true
+        state: started
+      tags:
+        - node_exporter
+        - monitoring

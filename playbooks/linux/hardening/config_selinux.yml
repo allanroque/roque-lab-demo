@@ -1,0 +1,38 @@
+---
+# Playbook: Configure SELinux Settings
+# Variables (AAP Survey):
+#   - (none required)
+# Tags: selinux
+
+- name: Configure SELinux Settings
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Enable SELinux in enforcing mode
+      ansible.posix.selinux:
+        policy: targeted
+        state: enforcing
+      tags:
+        - selinux
+
+    - name: Verify SELinux status
+      ansible.builtin.command: getenforce
+      register: selinux_status
+      changed_when: false
+      tags:
+        - selinux
+
+    - name: Show SELinux status
+      ansible.builtin.debug:
+        msg: "The SELinux status is {{ selinux_status.stdout }}"
+      tags:
+        - selinux
+
+    - name: Set Job ID number
+      ansible.builtin.set_stats:
+        data:
+          ac_job_id: "{{ awx_job_id }}"
+      tags:
+        - selinux

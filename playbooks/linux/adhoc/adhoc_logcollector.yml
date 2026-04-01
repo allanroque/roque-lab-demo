@@ -1,0 +1,24 @@
+---
+# Playbook: System Information Checklist (Log Collector)
+# No user variables required - uses gathered facts
+- name: System Information Checklist
+  hosts: all
+  gather_facts: true
+
+  tasks:
+    - name: Display system information summary
+      ansible.builtin.debug:
+        msg: |
+          System Information For Hostname: {{ ansible_hostname }}
+          - Distribution: {{ ansible_distribution }} {{ ansible_distribution_version }}
+          - DNS Servers: {{ ansible_dns.nameservers | default('Not Defined') | join(', ') }}
+          - IP Addresses: {{ ansible_all_ipv4_addresses }}
+          - Kernel: {{ ansible_kernel }}
+          - Installed Memory: {{ ansible_memtotal_mb }} MB
+          - Swap Memory: {{ ansible_swaptotal_mb }} MB
+          - Number of Processors: {{ ansible_processor_count }}
+          - Timezone: {{ ansible_date_time.tz }}
+      tags:
+        - adhoc
+        - info
+        - logcollector

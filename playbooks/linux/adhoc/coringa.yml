@@ -1,0 +1,27 @@
+---
+# Playbook: Debug simples com wait parametrizado
+# Variables (suitable for AAP Survey):
+#   mensagem:      string - Message to display (default: "Executando playbook de teste com sucesso")
+#   tempo_espera:  int    - Wait time in seconds (default: 5)
+- name: Debug simples com wait parametrizado
+  hosts: all
+  gather_facts: false
+
+  vars:
+    mensagem: "Executando playbook de teste com sucesso"
+    tempo_espera: 5
+
+  tasks:
+    - name: Exibir mensagem
+      ansible.builtin.debug:
+        msg: "{{ mensagem }}"
+      tags:
+        - debug
+        - coringa
+
+    - name: Aguardar tempo definido
+      ansible.builtin.pause:
+        seconds: "{{ tempo_espera }}"
+      tags:
+        - debug
+        - coringa

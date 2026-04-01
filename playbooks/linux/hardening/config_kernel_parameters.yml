@@ -1,0 +1,33 @@
+---
+# Playbook: Configurar parâmetros de kernel
+# Variables (AAP Survey):
+#   - (none required)
+# Tags: kernel, sysctl
+
+- name: Configurar parâmetros de kernel
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Desabilitar swap (vm.swappiness=10)
+      ansible.posix.sysctl:
+        name: vm.swappiness
+        value: "10"
+        state: present
+        sysctl_set: true
+        reload: true
+      tags:
+        - kernel
+        - sysctl
+
+    - name: Habilitar IP forwarding
+      ansible.posix.sysctl:
+        name: net.ipv4.ip_forward
+        value: "1"
+        state: present
+        sysctl_set: true
+        reload: true
+      tags:
+        - kernel
+        - sysctl

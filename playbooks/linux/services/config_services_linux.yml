@@ -1,0 +1,46 @@
+---
+# Playbook: Manage Allowed and Disallowed Services
+# Variables (suitable for AAP Survey):
+#   services_to_start: list - Services to enable and start
+#   services_to_stop:  list - Services to disable and stop
+- name: Manage Allowed and Disallowed Services
+  hosts: all
+  become: true
+  vars:
+    services_to_start:
+      - sshd
+      - rhsm
+      - firewalld
+      - chronyd
+      - cockpit.socket
+      - auditd
+    services_to_stop:
+      - telnetd
+      - ftpd
+      - cups
+      - bluetooth
+      - avahi-daemon
+      - postfix
+
+  tasks:
+    - name: Start and enable allowed services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+      loop: "{{ services_to_start }}"
+      failed_when: false
+      tags:
+        - service_management
+        - start
+
+    - name: Stop and disable disallowed services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop: "{{ services_to_stop }}"
+      failed_when: false
+      tags:
+        - service_management
+        - stop

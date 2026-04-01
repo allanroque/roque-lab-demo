@@ -1,0 +1,32 @@
+---
+# ============================================================
+# Configuração do Message of the Day (MOTD)
+# ============================================================
+# Variáveis para Survey do AAP:
+#   Nenhuma — utiliza facts do Ansible (ansible_hostname, ansible_distribution, etc.)
+# ============================================================
+- name: Configure Message of the Day (MOTD)
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Aplicar template do MOTD no host
+      ansible.builtin.template:
+        src: templates/motd.j2
+        dest: /etc/motd
+        owner: root
+        group: root
+        mode: "0644"
+      tags:
+        - motd
+        - config
+
+    - name: Garantir permissões corretas do arquivo MOTD
+      ansible.builtin.file:
+        path: /etc/motd
+        mode: "0644"
+        state: file
+      tags:
+        - motd
+        - config

@@ -1,0 +1,74 @@
+---
+# Playbook: Gerenciar usuários de serviço e sudoers
+# Variables (AAP Survey):
+#   - service_users: lista de usuários de serviço com nome e grupos
+#   - sudo_groups: lista de grupos com permissão de sudo
+# Tags: users, sudoers
+
+- name: Gerenciar usuários de serviço e sudoers
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    service_users:
+      - name: support
+        groups: ["service"]
+      - name: itops
+        groups: ["service"]
+
+    sudo_groups:
+      - group: itops
+        nopasswd: true
+
+  tasks:
+    - name: Criar grupo de serviço se não existir
+      ansible.builtin.group:
+        name: service
+        state: present
+      tags:
+        - users
+
+    - name: Criar usuários de serviço
+      ansible.builtin.user:
+        name: "{{ item.name }}"
+        groups: "{{ item.groups | join(',') }}"
+        shell: /bin/bash
+        create_home: true
+        state: present
+      loop: "{{ service_users }}"
+      tags:
+        - users
+
+    - name: Criar grupos de sudo dedicados
+      ansible.builtin.group:
+        name: "{{ item.group }}"
+        state: present
+      loop: "{{ sudo_groups }}"
+      tags:
+        - users
+        - sudoers
+
+    - name: Adicionar usuários aos grupos de sudo dedicados
+      ansible.builtin.user:
+        name: "{{ item.name }}"
+        groups: "{{ item.name }}"
+        append: true
+      loop: "{{ service_users }}"
+      when: item.name in sudo_groups | map(attribute='group') | list
+      tags:
+        - users
+        - sudoers
+
+    - name: Configurar sudoers por grupo
+      ansible.builtin.copy:
+        dest: "/etc/sudoers.d/{{ item.group }}"
+        content: |
+          %{{ item.group }} ALL=(ALL) {{ "NOPASSWD:" if item.nopasswd else "" }} ALL
+        owner: root
+        group: root
+        mode: "0440"
+        validate: 'visudo -cf %s'
+      loop: "{{ sudo_groups }}"
+      tags:
+        - sudoers

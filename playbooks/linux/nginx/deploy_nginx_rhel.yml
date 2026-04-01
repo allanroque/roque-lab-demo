@@ -1,0 +1,121 @@
+---
+# ============================================================
+# Deploy Parasol Insurance Website com Nginx no RHEL 9
+# ============================================================
+# Variáveis para Survey do AAP:
+#   website_repo: URL do repositório Git do website
+#   nginx_root:   Diretório raiz do Nginx (default: /usr/share/nginx/html)
+# ============================================================
+- name: Deploy Parasol Insurance Website to RHEL 9 with Nginx
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    website_repo: "https://github.com/ansible-tmm/parasol-website.git"
+    nginx_root: "/usr/share/nginx/html"
+    temp_dir: "/tmp/parasol-website"
+
+  pre_tasks:
+    - name: Aguardar SSH estar disponível
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+        delay: 5
+      tags:
+        - nginx
+        - pre
+
+  tasks:
+    - name: Instalar git para clonar o repositório
+      ansible.builtin.dnf:
+        name: git
+        state: present
+      tags:
+        - nginx
+        - install
+
+    - name: Instalar Nginx
+      ansible.builtin.dnf:
+        name: nginx
+        state: present
+      tags:
+        - nginx
+        - install
+
+    - name: Remover conteúdo anterior do diretório html do Nginx
+      ansible.builtin.file:
+        path: "{{ nginx_root }}/"
+        state: absent
+      tags:
+        - nginx
+        - deploy
+
+    - name: Garantir que diretório html do Nginx existe
+      ansible.builtin.file:
+        path: "{{ nginx_root }}"
+        state: directory
+        mode: "0755"
+        owner: root
+        group: root
+      tags:
+        - nginx
+        - deploy
+
+    - name: Clonar repositório do website Parasol
+      ansible.builtin.git:
+        repo: "{{ website_repo }}"
+        dest: "{{ temp_dir }}"
+        version: main
+        force: true
+      tags:
+        - nginx
+        - deploy
+
+    - name: Copiar arquivos do website para diretório do Nginx
+      ansible.builtin.copy:
+        src: "{{ temp_dir }}/"
+        dest: "{{ nginx_root }}/"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0644"
+        directory_mode: "0755"
+      tags:
+        - nginx
+        - deploy
+
+    - name: Restaurar contextos SELinux no diretório html do Nginx
+      ansible.builtin.command:
+        cmd: restorecon -Rv /usr/share/nginx/html
+      changed_when: false
+      tags:
+        - nginx
+        - selinux
+
+    - name: Garantir permissões corretas no diretório raiz do Nginx
+      ansible.builtin.file:
+        path: /usr/share/nginx/html
+        owner: root
+        group: root
+        mode: "0755"
+        recurse: true
+      tags:
+        - nginx
+        - deploy
+
+    - name: Remover diretório temporário
+      ansible.builtin.file:
+        path: "{{ temp_dir }}"
+        state: absent
+      tags:
+        - nginx
+        - cleanup
+
+    - name: Garantir Nginx habilitado e em execução
+      ansible.builtin.systemd:
+        name: nginx
+        state: started
+        enabled: true
+      tags:
+        - nginx
+        - service

@@ -1,0 +1,523 @@
+---
+# ============================================================
+# Playbook: PostgreSQL HealthCheck + Web Dashboard (Apache)
+# ============================================================
+# Variáveis esperadas (Survey do AAP):
+#   target_db     - Banco de dados alvo (default: postgres)
+#   target_schema - Schema alvo (default: public)
+# ============================================================
+# Variáveis internas:
+#   pg_user        - Usuário do PostgreSQL (default: postgres)
+#   pg_data_dir    - Diretório de dados (auto-detectado via SHOW)
+#   log_tail_lines - Linhas de log a analisar (default: 200)
+#   web_root       - Diretório raiz do site (default: /var/www/html/pg-health)
+#   db_name        - Alias para target_db
+#   schema_name    - Alias para target_schema
+# ============================================================
+
+- name: PostgreSQL HealthCheck + Web (Apache + templates)
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    pg_user: "postgres"
+    # valor inicial; será sobrescrito por SHOW data_directory (se possível)
+    pg_data_dir: "/var/lib/pgsql/data"
+    log_tail_lines: 200
+    web_root: "/var/www/html/pg-health"
+    db_name: "{{ target_db | default('postgres') }}"
+    schema_name: "{{ target_schema | default('public') }}"
+
+  pre_tasks:
+    - name: Definir uptime humano
+      ansible.builtin.set_fact:
+        uptime_h: >-
+          {{ (ansible_facts.uptime_seconds | int) // 86400 }}d
+          {{ ((ansible_facts.uptime_seconds | int) % 86400) // 3600 }}h
+          {{ (((ansible_facts.uptime_seconds | int) % 3600) // 60) }}m
+      tags:
+        - facts
+        - healthcheck
+
+    - name: Coletar facts de serviços (sem alterar estado)
+      ansible.builtin.service_facts:
+      tags:
+        - facts
+        - healthcheck
+
+  tasks:
+    # ====== SO ======
+    - name: Coletar sysctl relevantes
+      ansible.builtin.shell:
+        cmd: |
+          sysctl -n vm.swappiness || true
+          sysctl -n vm.dirty_background_ratio || true
+          sysctl -n vm.dirty_ratio || true
+      register: sysctl_out
+      changed_when: false
+      failed_when: false
+      tags:
+        - os
+        - healthcheck
+
+    - name: Verificar status de THP
+      ansible.builtin.shell:
+        cmd: |
+          E=/sys/kernel/mm/transparent_hugepage/enabled
+          D=/sys/kernel/mm/transparent_hugepage/defrag
+          echo -n "enabled: "; (test -r "$E" && cat "$E") || echo "n/a"
+          echo -n "defrag:  "; (test -r "$D" && cat "$D") || echo "n/a"
+      register: thp_out
+      changed_when: false
+      failed_when: false
+      tags:
+        - os
+        - healthcheck
+
+    # ====== Serviço / versão / dirs ======
+    - name: Determinar status do serviço PostgreSQL (via service_facts)
+      ansible.builtin.set_fact:
+        _svc_state: "{{ ansible_facts.services['postgresql.service'].state
+                        if 'postgresql.service' in ansible_facts.services else 'unknown' }}"
+        _svc_status: "{{ ansible_facts.services['postgresql.service'].status
+                        if 'postgresql.service' in ansible_facts.services else 'unknown' }}"
+      tags:
+        - service
+        - healthcheck
+
+    - name: Verificar se PostgreSQL está habilitado no boot
+      ansible.builtin.command:
+        cmd: systemctl is-enabled postgresql
+      register: svc_enabled
+      failed_when: false
+      changed_when: false
+      tags:
+        - service
+        - healthcheck
+
+    - name: Obter versão do binário PostgreSQL
+      ansible.builtin.command:
+        cmd: postgres -V
+      register: bin_ver
+      failed_when: false
+      changed_when: false
+      tags:
+        - service
+        - healthcheck
+
+    - name: Descobrir data_directory pelo PostgreSQL
+      become: true
+      become_user: "{{ pg_user }}"
+      ansible.builtin.command:
+        cmd: psql -tAc "SHOW data_directory;"
+      register: data_dir_q
+      failed_when: false
+      changed_when: false
+      tags:
+        - service
+        - healthcheck
+
+    - name: Ajustar pg_data_dir conforme SHOW data_directory
+      ansible.builtin.set_fact:
+        pg_data_dir: "{{ (data_dir_q.stdout | trim) if (data_dir_q.stdout | trim) else pg_data_dir }}"
+      tags:
+        - service
+        - healthcheck
+
+    - name: Obter resumo de diretórios e ownership
+      ansible.builtin.shell:
+        cmd: |
+          echo "PGDATA={{ pg_data_dir }}"
+          ls -ld "$(dirname '{{ pg_data_dir }}')" "{{ pg_data_dir }}" 2>/dev/null || true
+      register: dir_out
+      changed_when: false
+      failed_when: false
+      tags:
+        - service
+        - healthcheck
+
+    # ====== Rede / portas / firewall / SELinux ======
+    - name: Coletar informações de rede, portas, firewall e SELinux
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail && ss -ltnp | grep ':5432 ' || true
+          echo "---"
+          firewall-cmd --list-ports 2>/dev/null || echo "firewalld: n/a"
+          echo -n "SELinux: "; (getenforce 2>/dev/null || echo "n/a")
+      register: net_out
+      changed_when: false
+      failed_when: false
+      tags:
+        - network
+        - healthcheck
+
+    # ====== Autenticação (hba) ======
+    - name: Obter caminho do pg_hba.conf
+      become: true
+      become_user: "{{ pg_user }}"
+      ansible.builtin.command:
+        cmd: psql -tAc "SHOW hba_file;"
+      register: hba_path
+      changed_when: false
+      failed_when: false
+      tags:
+        - auth
+        - healthcheck
+
+    - name: Ler primeiras 120 linhas do pg_hba.conf
+      ansible.builtin.shell:
+        cmd: |
+          H="{{ hba_path.stdout | trim }}"
+          [ -r "$H" ] && sed -n '1,120p' "$H" || echo "pg_hba.conf não legível"
+      register: hba_head
+      changed_when: false
+      failed_when: false
+      tags:
+        - auth
+        - healthcheck
+
+    # ====== Bancos / roles / dono do DB alvo ======
+    - name: Listar bancos, roles e dono do DB alvo
+      become: true
+      become_user: "{{ pg_user }}"
+      ansible.builtin.shell:
+        cmd: |
+          echo "-- databases --"
+          psql -tAc "SELECT datname FROM pg_database WHERE datistemplate=false ORDER BY datname;" || true
+          echo "-- roles --"
+          psql -tAc "SELECT rolname, rolsuper, rolcanlogin FROM pg_roles ORDER BY rolname;" || true
+          echo "-- owner --"
+          psql -tAc "SELECT pg_catalog.pg_get_userbyid(datdba)
+                     FROM pg_database
+                     WHERE datname='{{ db_name }}';" || true
+      register: acc_out
+      changed_when: false
+      failed_when: false
+      tags:
+        - access
+        - healthcheck
+
+    # ====== Conexões / estados / idle in txn ======
+    - name: Coletar informações de conexões e estados
+      become: true
+      become_user: "{{ pg_user }}"
+      ansible.builtin.shell:
+        cmd: |
+          psql -tAc "SHOW max_connections;" || true
+          psql -tAc "SELECT count(*) FROM pg_stat_activity;" || true
+          psql -tAc "SELECT state, count(*) FROM pg_stat_activity GROUP BY state;" || true
+      register: conns_out
+      changed_when: false
+      failed_when: false
+      tags:
+        - connections
+        - healthcheck
+
+    - name: Listar top 10 idle in transaction
+      become: true
+      become_user: "{{ pg_user }}"
+      ansible.builtin.shell:
+        cmd: |
+          psql -F $'\t' -A -c \
+          "SELECT pid, usename, state, wait_event_type, wait_event, now()-xact_start AS xact_age, left(query,80) AS query
+           FROM pg_stat_activity WHERE state='idle in transaction'
+           ORDER BY xact_start NULLS LAST LIMIT 10;" || true
+      register: idle_out
+      changed_when: false
+      failed_when: false
+      tags:
+        - connections
+        - healthcheck
+
+    # ====== Storage / WAL ======
+    - name: Verificar espaço em disco do data_directory
+      ansible.builtin.command:
+        cmd: df -h "{{ pg_data_dir | dirname }}"
+      register: disk_out
+      failed_when: false
+      changed_when: false
+      tags:
+        - storage
+        - healthcheck
+
+    - name: Coletar informações de WAL e bgwriter
+      become: true
+      become_user: "{{ pg_user }}"
+      ansible.builtin.shell:
+        cmd: |
+          echo "-- wal_level --"
+          psql -tAc "SHOW wal_level;" || true
+          echo "-- bgwriter --"
+          psql -x -c "SELECT checkpoints_timed, checkpoints_req, buffers_checkpoint,
+                             buffers_clean, maxwritten_clean, buffers_backend
+                      FROM pg_stat_bgwriter;" || true
+      register: wal_out
+      changed_when: false
+      failed_when: false
+      tags:
+        - storage
+        - healthcheck
+
+    # ====== Configs-chave ======
+    - name: Coletar parâmetros de configuração (sanidade)
+      become: true
+      become_user: "{{ pg_user }}"
+      ansible.builtin.shell:
+        cmd: |
+          psql -tAc "SHOW config_file;" || true
+          psql -tAc "SHOW shared_buffers;" || true
+          psql -tAc "SHOW work_mem;" || true
+          psql -tAc "SHOW maintenance_work_mem;" || true
+          psql -tAc "SHOW effective_cache_size;" || true
+          psql -tAc "SHOW max_wal_size;" || true
+          psql -tAc "SHOW timezone;" || true
+          psql -tAc "SHOW log_min_duration_statement;" || true
+      register: conf_out
+      changed_when: false
+      failed_when: false
+      tags:
+        - config
+        - healthcheck
+
+    # ====== Logs ======
+    - name: Coletar informações de log e erros recentes
+      become: true
+      become_user: "{{ pg_user }}"
+      ansible.builtin.shell:
+        cmd: |
+          LOGDIR=$(psql -tAc "SHOW log_directory;" | tr -d ' ')
+          echo "-- log_directory --"
+          echo "$LOGDIR"
+          echo "-- log_filename --"
+          psql -tAc "SHOW log_filename;" || true
+          LAST=$(ls -1t "{{ pg_data_dir }}/$LOGDIR" 2>/dev/null | head -1)
+          echo "-- tail_errors --"
+          set -o pipefail && tail -n {{ log_tail_lines }} "{{ pg_data_dir }}/$LOGDIR/$LAST" 2>/dev/null | grep -iE "ERROR|FATAL|PANIC" || true
+      register: logs_out
+      changed_when: false
+      failed_when: false
+      tags:
+        - logs
+        - healthcheck
+
+    # ====== Extensões / Schemas / Tabelas / Replicação ======
+    - name: Listar extensões e schemas do DB alvo
+      become: true
+      become_user: "{{ pg_user }}"
+      ansible.builtin.shell:
+        cmd: |
+          DB="{{ db_name }}"
+          echo "-- extensions --"
+          psql -d "$DB" -tAc "SELECT extname, extversion FROM pg_extension;" || true
+          echo "-- schemas --"
+          psql -d "$DB" -tAc "SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg_%' AND nspname <> 'information_schema' ORDER BY 1;" || true
+      register: exts_out
+      changed_when: false
+      failed_when: false
+      tags:
+        - schema
+        - healthcheck
+
+    - name: Obter privilégios em schema (lista e dono)
+      become: true
+      become_user: "{{ pg_user }}"
+      ansible.builtin.shell:
+        cmd: |
+          DB="{{ db_name }}"
+          SCHEMA="{{ schema_name }}"
+          psql -d "$DB" -x -c "SELECT nspname, pg_get_userbyid(nspowner) AS owner FROM pg_namespace WHERE nspname='$SCHEMA';" || true
+          psql -d "$DB" -c "SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema='$SCHEMA' ORDER BY 1,2 LIMIT 20;" || true
+      register: schema_out
+      changed_when: false
+      failed_when: false
+      tags:
+        - schema
+        - healthcheck
+
+    - name: Verificar replicação e tabelas quentes
+      become: true
+      become_user: "{{ pg_user }}"
+      ansible.builtin.shell:
+        cmd: |
+          DB="{{ db_name }}"
+          echo "-- recovery? --"
+          psql -tAc "SELECT pg_is_in_recovery();" || true
+          echo "-- replicas --"
+          psql -x -c "SELECT client_addr, state, sync_state, write_lag, flush_lag, replay_lag FROM pg_stat_replication;" || true
+          echo "-- hot tables --"
+          psql -d "$DB" -x -c \
+          "SELECT relname, seq_scan, idx_scan, n_tup_ins, n_tup_upd, n_tup_del
+           FROM pg_stat_user_tables
+           ORDER BY (n_tup_ins+n_tup_upd+n_tup_del) DESC NULLS LAST LIMIT 10;" || true
+          echo "-- vacuum/analyze --"
+          psql -d "$DB" -x -c \
+          "SELECT relname, last_vacuum, last_autovacuum, last_analyze, last_autoanalyze
+           FROM pg_stat_user_tables ORDER BY last_autovacuum NULLS FIRST LIMIT 10;" || true
+      register: repl_hot_out
+      changed_when: false
+      failed_when: false
+      tags:
+        - replication
+        - healthcheck
+
+    # ====== DNS (extra) ======
+    - name: Coletar informações de DNS/resolv.conf
+      ansible.builtin.shell:
+        cmd: |
+          grep -E '^(nameserver|search|domain)' /etc/resolv.conf 2>/dev/null || echo "resolv.conf n/a"
+      register: dns_out
+      changed_when: false
+      failed_when: false
+      tags:
+        - os
+        - healthcheck
+
+    # ====== Postgres básico (bloco simples para parse do front) ======
+    - name: Coletar informações básicas do PostgreSQL via socket
+      become: true
+      become_user: "{{ pg_user }}"
+      ansible.builtin.shell:
+        cmd: |
+          psql -tAc "SELECT version();"                || true
+          psql -tAc "SHOW server_version_num;"        || true
+          psql -tAc "SHOW listen_addresses;"          || true
+          psql -tAc "SHOW port;"                      || true
+          psql -tAc "SHOW config_file;"               || true
+          psql -tAc "SHOW hba_file;"                  || true
+          psql -tAc "SHOW log_directory;"             || true
+          psql -tAc "SELECT count(*) FROM pg_stat_activity;" || true
+      register: psql_basic
+      changed_when: false
+      failed_when: false
+      tags:
+        - postgres
+        - healthcheck
+
+    - name: Obter tamanhos por banco de dados
+      become: true
+      become_user: "{{ pg_user }}"
+      ansible.builtin.command:
+        cmd: >
+          psql -tAc
+          "SELECT datname, pg_size_pretty(pg_database_size(datname))
+           FROM pg_database
+           WHERE datistemplate=false
+           ORDER BY 2 DESC;"
+      register: db_sizes
+      changed_when: false
+      failed_when: false
+      tags:
+        - storage
+        - healthcheck
+
+    # ====== Monta dicionário ======
+    - name: Consolidar relatório de healthcheck
+      ansible.builtin.set_fact:
+        report:
+          collected_at: "{{ ansible_date_time.iso8601 | default('') }}"
+          host: "{{ inventory_hostname | default('') }}"
+          os:
+            distro: "{{ ((ansible_facts.distribution | default(ansible_distribution | default(''))) ~ ' ' ~ (ansible_facts.distribution_version | default(ansible_distribution_version | default('')))) }}"
+            kernel: "{{ ((ansible_facts.kernel | default(ansible_system | default(''))) ~ ' ' ~ (ansible_facts.kernel_release | default(ansible_kernel | default('')))) }}"
+            arch: "{{ ansible_facts.architecture | default(ansible_architecture | default('')) }}"
+            uptime: "{{ uptime_h | default('') }}"
+            mem_mb: "{{ ansible_facts.memtotal_mb | default(0) }}"
+            cpu_vcpus: "{{ ansible_facts.processor_vcpus | default(ansible_facts.processor_count | default(0)) }}"
+            mounts: "{{ (ansible_facts.mounts | default([])) | map(attribute='mount') | list }}"
+            sysctl_sample: "{{ sysctl_out.stdout_lines | default([]) }}"
+            thp: "{{ thp_out.stdout | default('') }}"
+            dns: "{{ dns_out.stdout | default('') }}"
+          service:
+            status: "active={{ _svc_state | default('unknown') }}, detail={{ _svc_status | default('') }}, enabled={{ svc_enabled.stdout | default('unknown') }}"
+            bin_version: "{{ bin_ver.stdout | default('') }}"
+            dirs: "{{ dir_out.stdout | default('') }}"
+            network: "{{ net_out.stdout | default('') }}"
+          postgres:
+            basics: "{{ psql_basic.stdout | default('') }}"
+            configs: "{{ conf_out.stdout | default('') }}"
+            hba_head: "{{ hba_head.stdout | default('') }}"
+            accounts: "{{ acc_out.stdout | default('') }}"
+            connections: "{{ conns_out.stdout | default('') }}"
+            idle_in_txn: "{{ idle_out.stdout | default('') }}"
+            db_sizes: "{{ db_sizes.stdout | default('') }}"
+            disk: "{{ disk_out.stdout | default('') }}"
+            wal: "{{ wal_out.stdout | default('') }}"
+            logs: "{{ logs_out.stdout | default('') }}"
+            extensions_schemas: "{{ exts_out.stdout | default('') }}"
+            schema_details: "{{ schema_out.stdout | default('') }}"
+            replication_hot: "{{ repl_hot_out.stdout | default('') }}"
+      tags:
+        - report
+        - healthcheck
+
+    - name: Exibir relatório consolidado
+      ansible.builtin.debug:
+        var: report
+      tags:
+        - report
+        - healthcheck
+
+    # ====== Web (Apache + templates) ======
+    - name: Garantir que Apache (httpd) está iniciado e habilitado
+      ansible.builtin.systemd:
+        name: httpd
+        state: started
+        enabled: true
+      tags:
+        - web
+        - healthcheck
+
+    - name: Criar diretório do site de healthcheck
+      ansible.builtin.file:
+        path: "{{ web_root }}"
+        state: directory
+        mode: "0755"
+      tags:
+        - web
+        - healthcheck
+
+    - name: Publicar health.json via template
+      ansible.builtin.template:
+        src: "templates/health.json.j2"
+        dest: "{{ web_root }}/health.json"
+        mode: "0644"
+      tags:
+        - web
+        - healthcheck
+
+    - name: Publicar arquivo CSS
+      ansible.builtin.copy:
+        src: "files/styles.css"
+        dest: "{{ web_root }}/styles.css"
+        mode: "0644"
+      notify: reload apache
+      tags:
+        - web
+        - healthcheck
+
+    - name: Publicar arquivo app.js
+      ansible.builtin.copy:
+        src: "files/app.js"
+        dest: "{{ web_root }}/app.js"
+        mode: "0644"
+      notify: reload apache
+      tags:
+        - web
+        - healthcheck
+
+    - name: Publicar index.html via template
+      ansible.builtin.template:
+        src: "templates/index.html.j2"
+        dest: "{{ web_root }}/index.html"
+        mode: "0644"
+      notify: reload apache
+      tags:
+        - web
+        - healthcheck
+
+  handlers:
+    - name: reload apache
+      ansible.builtin.systemd:
+        name: httpd
+        state: reloaded

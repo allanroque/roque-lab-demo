@@ -1,0 +1,73 @@
+---
+# Playbook: Install and configure Promtail on Linux nodes
+# Variables (AAP Survey):
+#   - (none required)
+# Tags: promtail, monitoring
+
+- name: Install and configure Promtail on Linux nodes
+  hosts: INFRA
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Create Grafana repo file
+      ansible.builtin.copy:
+        src: files/grafana.repo
+        dest: /etc/yum.repos.d/grafana.repo
+        mode: "0644"
+        owner: root
+        group: root
+      tags:
+        - promtail
+
+    - name: Install Promtail package
+      ansible.builtin.dnf:
+        name: promtail
+        state: present
+      when: ansible_os_family == 'RedHat'
+      tags:
+        - promtail
+
+    - name: Set ACL permissions for Promtail on log directory
+      ansible.posix.acl:
+        path: /var/log
+        entity: promtail
+        etype: user
+        permissions: rX
+        recursive: true
+        state: present
+      tags:
+        - promtail
+
+    - name: Add promtail user to adm group
+      ansible.builtin.user:
+        name: promtail
+        groups: adm
+        append: true
+      tags:
+        - promtail
+
+    - name: Create Promtail configuration file
+      ansible.builtin.copy:
+        src: files/promtail-config.yaml
+        dest: /etc/promtail/config.yml
+        mode: "0644"
+        owner: root
+        group: root
+      tags:
+        - promtail
+
+    - name: Reload systemd daemon
+      ansible.builtin.systemd:
+        daemon_reload: true
+      tags:
+        - promtail
+
+    - name: Enable and start Promtail service
+      ansible.builtin.systemd:
+        name: promtail
+        enabled: true
+        state: started
+      tags:
+        - promtail
+        - monitoring

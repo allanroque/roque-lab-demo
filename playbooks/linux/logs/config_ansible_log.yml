@@ -1,0 +1,54 @@
+---
+# Playbook: Setup Automation Log Directory
+# Variables:
+#   log_dir_path:  string - Path for automation logs (default: /var/log/ansible)
+#   log_dir_owner: string - Owner of the log directory (default: ansible)
+#   log_dir_group: string - Group of the log directory (default: root)
+#   log_dir_mode:  string - Permissions for the log directory (default: 0755)
+- name: Setup Automation Log Directory
+  hosts: all
+  become: true
+  ignore_unreachable: true
+
+  vars:
+    log_dir_path: /var/log/ansible
+    log_dir_owner: ansible
+    log_dir_group: root
+    log_dir_mode: "0755"
+
+  tasks:
+    - name: Create directory for automation logs
+      ansible.builtin.file:
+        path: "{{ log_dir_path }}"
+        state: directory
+        mode: "{{ log_dir_mode }}"
+        owner: "{{ log_dir_owner }}"
+        group: "{{ log_dir_group }}"
+      tags:
+        - logs
+        - setup
+
+    - name: Verify directory creation
+      ansible.builtin.stat:
+        path: "{{ log_dir_path }}"
+      register: log_dir
+      tags:
+        - logs
+        - verify
+
+    - name: Show directory details
+      ansible.builtin.debug:
+        msg: "Directory {{ log_dir_path }} created with permissions {{ log_dir.stat.mode }}"
+      when: log_dir.stat.exists
+      tags:
+        - logs
+        - verify
+
+    - name: Start and enable rsyslog service
+      ansible.builtin.systemd:
+        name: rsyslog
+        state: started
+        enabled: true
+      tags:
+        - logs
+        - rsyslog

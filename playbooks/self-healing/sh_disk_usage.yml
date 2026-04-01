@@ -1,0 +1,81 @@
+---
+# =========================================================================
+# Playbook: Gerenciamento de arquivos e logs (Self-Healing)
+# =========================================================================
+# Variaveis para AAP Survey:
+#   (nenhuma - executa em todos os hosts do inventario)
+# =========================================================================
+- name: Gerenciar arquivos grandes e rotacao de logs
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Coletar top 5 maiores arquivos em diretorios criticos
+      ansible.builtin.command:
+        cmd: "find {{ item }} -type f -exec du -h {} + 2>/dev/null | sort -rh | head -n 5"
+      loop:
+        - "/"
+        - "/opt"
+        - "/var"
+        - "/var/log"
+      register: largest_files
+      changed_when: false
+      failed_when: false
+      tags:
+        - self-healing
+        - disk
+        - check
+
+    - name: Exibir maiores arquivos encontrados
+      ansible.builtin.debug:
+        msg: "{{ item.stdout_lines }}"
+      loop: "{{ largest_files.results }}"
+      when: item.stdout_lines is defined
+      tags:
+        - self-healing
+        - disk
+        - debug
+
+    - name: Forcar rotacao de logs
+      ansible.builtin.command:
+        cmd: "logrotate -f /etc/logrotate.conf"
+      changed_when: true
+      failed_when: false
+      tags:
+        - self-healing
+        - disk
+        - cleanup
+
+    - name: Remover arquivos de log e cache especificos
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/var/log/app.log"
+      failed_when: false
+      tags:
+        - self-healing
+        - disk
+        - cleanup
+
+    - name: Limpar cache do gerenciador de pacotes
+      ansible.builtin.dnf:
+        autoremove: false
+        state: present
+        update_cache: true
+      changed_when: false
+      failed_when: false
+      tags:
+        - self-healing
+        - disk
+        - cleanup
+
+    - name: Exportar ID do job para rastreabilidade
+      ansible.builtin.set_stats:
+        data:
+          ac_job_id: "{{ awx_job_id | default('0') }}"
+      tags:
+        - self-healing
+        - disk
+        - workflow

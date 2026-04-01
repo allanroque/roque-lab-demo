@@ -1,0 +1,15 @@
+---
+# Playbook: Quickwins Linux baseline (role-based execution)
+# Variables (AAP Survey):
+#   - (defined within individual roles)
+# Tags: baseline
+
+- name: Quickwins Linux baseline
+  hosts: linux
+  become: true
+  gather_facts: true
+
+  roles:
+    - linux_motd
+    - linux_chrony
+    - linux_hardening

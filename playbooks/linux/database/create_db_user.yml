@@ -1,0 +1,63 @@
+---
+# ============================================================
+# Playbook: Criar usuário no PostgreSQL via Survey (AAP)
+# ============================================================
+# Variáveis esperadas (Survey do AAP):
+#   username        - Nome do usuário a criar no PostgreSQL
+#   user_password   - Senha do novo usuário (credential do AAP)
+#   target_database - Nome do banco de dados alvo
+#   privileges      - Privilégios a conceder (ex: ALL, SELECT, INSERT)
+# ============================================================
+
+- name: Criar usuário no PostgreSQL com acesso a banco via Survey (AAP)
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    db_username: "{{ username }}"
+    db_user_password: "{{ user_password }}"
+    db_name: "{{ target_database }}"
+    db_privileges: "{{ privileges }}"
+
+  tasks:
+    - name: Verificar se o usuário já existe no PostgreSQL
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        query: "SELECT 1 FROM pg_roles WHERE rolname = %(role)s"
+        named_args:
+          role: "{{ db_username }}"
+      register: user_check
+      changed_when: false
+      tags:
+        - create_user
+        - check
+
+    - name: Criar usuário com senha no PostgreSQL
+      become_user: postgres
+      community.postgresql.postgresql_user:
+        name: "{{ db_username }}"
+        password: "{{ db_user_password }}"
+        state: present
+      when: user_check.rowcount == 0
+      tags:
+        - create_user
+
+    - name: Conceder privilégios no banco de dados
+      become_user: postgres
+      community.postgresql.postgresql_privs:
+        database: "{{ db_name }}"
+        roles: "{{ db_username }}"
+        type: database
+        privs: "{{ db_privileges }}"
+        state: present
+      tags:
+        - grant_privileges
+
+    - name: Confirmar criação e acesso
+      ansible.builtin.debug:
+        msg: "Usuário '{{ db_username }}' criado e recebeu '{{ db_privileges }}' no banco '{{ db_name }}'"
+      tags:
+        - create_user
+        - grant_privileges
+        - check

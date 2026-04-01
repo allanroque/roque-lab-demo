@@ -1,0 +1,56 @@
+---
+# Playbook: Configuração do chrony (NTP)
+# Variables (AAP Survey):
+#   - (none required)
+# Tags: chrony, ntp
+
+- name: Configuração do chrony
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Instalação do pacote chrony
+      ansible.builtin.dnf:
+        name: chrony
+        state: present
+      tags:
+        - chrony
+        - ntp
+
+    - name: Copiar o arquivo de configuração do chrony para o node
+      ansible.builtin.copy:
+        src: files/chrony.conf
+        dest: /etc/chrony.conf
+        mode: "0644"
+        owner: root
+        group: root
+      tags:
+        - chrony
+        - ntp
+
+    - name: Start do serviço do chrony
+      ansible.builtin.service:
+        name: chronyd
+        state: started
+        enabled: true
+      tags:
+        - chrony
+        - ntp
+
+    - name: Validar o horário do servidor
+      ansible.builtin.command: chronyc tracking
+      register: cmd_result
+      changed_when: false
+      ignore_errors: true
+      check_mode: false
+      tags:
+        - chrony
+        - ntp
+
+    - name: Exibir o resultado do comando
+      ansible.builtin.debug:
+        var: cmd_result.stdout_lines
+      tags:
+        - chrony
+        - ntp

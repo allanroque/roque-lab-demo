@@ -1,0 +1,118 @@
+---
+# =========================================================================
+# Playbook: Remediacao - Alto consumo de memoria
+# =========================================================================
+# Variaveis para AAP Survey:
+#   target_host  - Host ou grupo alvo (default: target)
+# =========================================================================
+# Nota: Este playbook utiliza ansible.builtin.shell em tarefas especificas
+# onde nao existe modulo Ansible equivalente (manipulacao de /proc, pkill,
+# ps com pipes). Todas as chamadas possuem changed_when controlado.
+# =========================================================================
+- name: Remediacao - Alto consumo de memoria
+  hosts: "{{ target_host | default('target') }}"
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Coletar uso atual de memoria
+      ansible.builtin.shell: >
+        set -o pipefail && free -h | grep Mem
+      register: memory_usage_before
+      changed_when: false
+      tags:
+        - remediation
+        - memory
+        - check
+
+    - name: Exibir uso atual de memoria
+      ansible.builtin.debug:
+        msg: "Memory before cleanup:\n{{ memory_usage_before.stdout }}"
+      tags:
+        - remediation
+        - memory
+        - debug
+
+    - name: Limpar page cache do sistema
+      ansible.builtin.shell: |
+        sync
+        echo 3 > /proc/sys/vm/drop_caches
+      changed_when: true
+      register: cache_cleared
+      tags:
+        - remediation
+        - memory
+        - cleanup
+
+    - name: Encerrar processos de stress de memoria
+      ansible.builtin.shell: "pkill -f 'stress --vm' || pkill -f 'stress -m' || true"
+      register: vm_stress_killed
+      changed_when: vm_stress_killed.rc == 0
+      failed_when: false
+      tags:
+        - remediation
+        - memory
+        - cleanup
+
+    - name: Informar sobre encerramento de processos stress
+      ansible.builtin.debug:
+        msg: "Memory stress processes killed: {{ vm_stress_killed.rc == 0 }}"
+      tags:
+        - remediation
+        - memory
+        - debug
+
+    - name: Listar processos com maior consumo de memoria
+      ansible.builtin.shell: "set -o pipefail && ps aux --sort=-%mem | head -6 | tail -5"
+      register: memory_hogs
+      changed_when: false
+      tags:
+        - remediation
+        - memory
+        - check
+
+    - name: Exibir processos com maior consumo de memoria
+      ansible.builtin.debug:
+        msg: "Top 5 memory-consuming processes:\n{{ memory_hogs.stdout }}"
+      tags:
+        - remediation
+        - memory
+        - debug
+
+    - name: Aguardar limpeza de processos
+      ansible.builtin.pause:
+        seconds: 2
+      tags:
+        - remediation
+        - memory
+
+    - name: Coletar uso de memoria apos limpeza
+      ansible.builtin.shell: >
+        set -o pipefail && free -h | grep Mem
+      register: memory_usage_after
+      changed_when: false
+      tags:
+        - remediation
+        - memory
+        - check
+
+    - name: Exibir uso de memoria apos limpeza
+      ansible.builtin.debug:
+        msg: "Memory after cleanup:\n{{ memory_usage_after.stdout }}"
+      tags:
+        - remediation
+        - memory
+        - debug
+
+    - name: Exibir relatorio de remediacao de memoria
+      ansible.builtin.debug:
+        msg:
+          - "=== HIGH MEMORY REMEDIATION REPORT ==="
+          - "{{ memory_usage_before.stdout }}"
+          - "{{ memory_usage_after.stdout }}"
+          - "Cache cleared: {{ cache_cleared.changed }}"
+          - "Memory stress processes killed: {{ vm_stress_killed.rc == 0 }}"
+      tags:
+        - remediation
+        - memory
+        - report

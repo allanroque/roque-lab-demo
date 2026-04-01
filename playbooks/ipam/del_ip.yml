@@ -1,0 +1,60 @@
+---
+# =============================================================================
+# Playbook: Remover endereco IP do IPAM (NetBox)
+# Descricao: Remove um registro de IP existente no NetBox.
+#
+# Variaveis para Survey do AAP:
+#   host_ip      - Endereco IP a remover (ex: 192.168.100.23) [obrigatorio]
+#   net_cidr     - Mascara CIDR da rede (default: 24)
+#   netbox_url   - URL do NetBox  # Configurado no AAP Controller
+#   netbox_token - Token de autenticacao do NetBox  # Configurado no AAP Controller
+# =============================================================================
+- name: Remover endereco IP do IPAM (NetBox)
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    host_ip: ""
+    net_cidr: "24"
+    netbox_url: ""   # Configurado no AAP Controller
+    netbox_token: ""  # Configurado no AAP Controller
+
+  tasks:
+    - name: Validar variaveis obrigatorias
+      ansible.builtin.assert:
+        that:
+          - host_ip | length > 0
+          - netbox_url | length > 0
+          - netbox_token | length > 0
+        fail_msg: "As variaveis host_ip, netbox_url e netbox_token sao obrigatorias"
+        quiet: true
+      tags:
+        - validacao
+        - ipam
+
+    - name: Exibir IP a ser removido do IPAM
+      ansible.builtin.debug:
+        msg: "Removendo IP {{ host_ip }}/{{ net_cidr }} do IPAM"
+      tags:
+        - ipam
+        - debug
+
+    - name: Remover IP {{ host_ip }} do IPAM
+      netbox.netbox.netbox_ip_address:
+        netbox_url: "{{ netbox_url }}"
+        netbox_token: "{{ netbox_token }}"
+        data:
+          address: "{{ host_ip }}/{{ net_cidr }}"
+        state: absent
+        validate_certs: false
+      tags:
+        - ipam
+        - registro
+
+    - name: Exportar ID do job para rastreabilidade
+      ansible.builtin.set_stats:
+        data:
+          ac_job_id: "{{ awx_job_id | default('0') }}"
+      tags:
+        - ipam
+        - export

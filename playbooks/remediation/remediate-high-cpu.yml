@@ -1,0 +1,130 @@
+---
+# =========================================================================
+# Playbook: Remediacao - Alto consumo de CPU
+# =========================================================================
+# Variaveis para AAP Survey:
+#   target_host  - Host ou grupo alvo (default: target)
+# =========================================================================
+# Nota: Este playbook utiliza ansible.builtin.shell em tarefas especificas
+# onde nao existe modulo Ansible equivalente (ps com pipes, pkill, top).
+# Todas as chamadas de leitura possuem changed_when: false.
+# =========================================================================
+- name: Remediacao - Alto consumo de CPU
+  hosts: "{{ target_host | default('target') }}"
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Listar top 5 processos com maior consumo de CPU
+      ansible.builtin.shell: "set -o pipefail && ps aux --sort=-%cpu | head -6 | tail -5"
+      register: top_cpu_processes
+      changed_when: false
+      tags:
+        - remediation
+        - cpu
+        - check
+
+    - name: Exibir processos com maior consumo de CPU
+      ansible.builtin.debug:
+        msg: "Top 5 CPU-consuming processes:\n{{ top_cpu_processes.stdout }}"
+      tags:
+        - remediation
+        - cpu
+        - debug
+
+    - name: Coletar uso atual de CPU
+      ansible.builtin.shell: "set -o pipefail && top -bn1 | grep 'Cpu(s)' | awk '{print $2}' | cut -d'%' -f1"
+      register: cpu_usage_before
+      changed_when: false
+      tags:
+        - remediation
+        - cpu
+        - check
+
+    - name: Exibir uso atual de CPU
+      ansible.builtin.debug:
+        msg: "Current CPU usage: {{ cpu_usage_before.stdout }}%"
+      tags:
+        - remediation
+        - cpu
+        - debug
+
+    - name: Encerrar processos de stress
+      ansible.builtin.shell: "pkill -f stress || true"
+      register: stress_killed
+      changed_when: stress_killed.rc == 0
+      failed_when: false
+      tags:
+        - remediation
+        - cpu
+        - cleanup
+
+    - name: Informar sobre encerramento de processos stress
+      ansible.builtin.debug:
+        msg: "Stress processes killed: {{ stress_killed.rc == 0 }}"
+      tags:
+        - remediation
+        - cpu
+        - debug
+
+    - name: Contar processos zombie
+      ansible.builtin.shell: "set -o pipefail && ps aux | grep -c '<defunct>' || echo 0"
+      register: zombie_count
+      changed_when: false
+      failed_when: false
+      tags:
+        - remediation
+        - cpu
+        - check
+
+    - name: Limpar processos zombie se existirem
+      ansible.builtin.shell: |
+        set -o pipefail
+        for pid in $(ps aux | grep '<defunct>' | grep -v grep | awk '{print $2}'); do
+          kill -9 $pid 2>/dev/null || true
+        done
+      when: zombie_count.stdout | int > 0
+      changed_when: true
+      register: zombie_cleanup
+      tags:
+        - remediation
+        - cpu
+        - cleanup
+
+    - name: Aguardar limpeza de processos
+      ansible.builtin.pause:
+        seconds: 2
+      tags:
+        - remediation
+        - cpu
+
+    - name: Coletar uso de CPU apos limpeza
+      ansible.builtin.shell: "set -o pipefail && top -bn1 | grep 'Cpu(s)' | awk '{print $2}' | cut -d'%' -f1"
+      register: cpu_usage_after
+      changed_when: false
+      tags:
+        - remediation
+        - cpu
+        - check
+
+    - name: Exibir uso de CPU apos limpeza
+      ansible.builtin.debug:
+        msg: "CPU usage after cleanup: {{ cpu_usage_after.stdout }}%"
+      tags:
+        - remediation
+        - cpu
+        - debug
+
+    - name: Exibir relatorio de remediacao de CPU
+      ansible.builtin.debug:
+        msg:
+          - "=== HIGH CPU REMEDIATION REPORT ==="
+          - "CPU usage before: {{ cpu_usage_before.stdout }}%"
+          - "CPU usage after: {{ cpu_usage_after.stdout }}%"
+          - "Stress processes killed: {{ stress_killed.rc == 0 }}"
+          - "Zombie processes found: {{ zombie_count.stdout }}"
+          - "Zombie cleanup: {{ zombie_cleanup.changed | default(false) }}"
+      tags:
+        - remediation
+        - cpu
+        - report

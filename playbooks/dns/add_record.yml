@@ -1,0 +1,87 @@
+---
+# =============================================================================
+# Playbook: Criar registro DNS (A e PTR)
+# Descricao: Cria um registro A e seu respectivo PTR no servidor DNS via nsupdate
+#
+# Variaveis para Survey do AAP:
+#   host_ip          - Endereco IP do host (ex: 192.168.100.51)
+#   host_name        - FQDN do host (ex: web01.aroque.com.br)
+#   dns_server       - IP do servidor DNS (default: 192.168.100.11)
+#   dns_zone         - Zona DNS direta (default: aroque.com.br)
+#   dns_reverse_zone - Zona DNS reversa (default: 100.168.192.in-addr.arpa)
+#   dns_key_name     - Nome da chave TSIG (default: ansible-key)
+#   dns_key_secret   - Segredo da chave TSIG  # Configurado no AAP Controller
+#   dns_key_algorithm - Algoritmo da chave (default: hmac-sha256)
+# =============================================================================
+- name: Atualizar DNS - Criar registro A e PTR
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    host_ip: ""
+    host_name: ""
+    dns_server: "192.168.100.11"
+    dns_zone: "aroque.com.br"
+    dns_reverse_zone: "100.168.192.in-addr.arpa"
+    dns_key_name: "ansible-key"
+    dns_key_secret: ""  # Configurado no AAP Controller
+    dns_key_algorithm: "hmac-sha256"
+
+  tasks:
+    - name: Validar que host_ip e host_name foram informados
+      ansible.builtin.assert:
+        that:
+          - host_ip | length > 0
+          - host_name | length > 0
+        fail_msg: "As variaveis host_ip e host_name sao obrigatorias"
+        quiet: true
+      tags:
+        - validacao
+        - dns
+
+    - name: Criar registro A no DNS para {{ host_name }}
+      community.general.nsupdate:
+        server: "{{ dns_server }}"
+        zone: "{{ dns_zone }}"
+        record: "{{ host_name.split('.')[0] }}"
+        type: A
+        value: "{{ host_ip }}"
+        ttl: 300
+        key_name: "{{ dns_key_name }}"
+        key_secret: "{{ dns_key_secret }}"
+        key_algorithm: "{{ dns_key_algorithm }}"
+      tags:
+        - dns
+        - registro_a
+
+    - name: Criar registro PTR no DNS reverso para {{ host_ip }}
+      community.general.nsupdate:
+        server: "{{ dns_server }}"
+        zone: "{{ dns_reverse_zone }}"
+        record: "{{ host_ip.split('.')[-1] }}.{{ dns_reverse_zone }}"
+        type: PTR
+        value: "{{ host_name }}."
+        ttl: 300
+        key_name: "{{ dns_key_name }}"
+        key_secret: "{{ dns_key_secret }}"
+        key_algorithm: "{{ dns_key_algorithm }}"
+      tags:
+        - dns
+        - registro_ptr
+
+    - name: Exibir IP e hostname configurados
+      ansible.builtin.debug:
+        msg: "Registro DNS criado - {{ host_name }} -> {{ host_ip }}"
+      tags:
+        - dns
+        - debug
+
+    - name: Exportar variaveis para proximo job template
+      ansible.builtin.set_stats:
+        data:
+          host_ip: "{{ host_ip }}"
+          host_name: "{{ host_name }}"
+          hostname: "{{ host_name }}"
+      tags:
+        - dns
+        - export

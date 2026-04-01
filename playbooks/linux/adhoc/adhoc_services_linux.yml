@@ -1,0 +1,29 @@
+---
+# Playbook: Start the RHEL service (demo/placeholder)
+# No user variables required
+- name: Start the RHEL service
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Notify RHEL service starting
+      ansible.builtin.debug:
+        msg: "Starting the RHEL service..."
+      tags:
+        - adhoc
+        - service
+
+    - name: Wait for RHEL service to be started
+      ansible.builtin.pause:
+        seconds: 3
+      tags:
+        - adhoc
+        - service
+
+    - name: Confirm RHEL service started successfully
+      ansible.builtin.debug:
+        msg: "RHEL service starting is completed successfully!"
+      tags:
+        - adhoc
+        - service

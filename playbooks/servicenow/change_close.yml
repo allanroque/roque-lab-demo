@@ -1,0 +1,55 @@
+---
+# =========================================================================
+# Playbook: Fechar Change Request no ServiceNow
+# =========================================================================
+# Variáveis para AAP Survey:
+#   sn_change_request_number - Número da change a ser fechada (ex: CHG0010001)
+#   sn_closure_code          - Código de fechamento (default: "successful")
+#   sn_closure_notes         - Notas de fechamento
+# Credenciais (via AAP Credential):
+#   snow_host                - URL da instância ServiceNow
+#   snow_username            - Usuário ServiceNow
+#   snow_password            - Senha ServiceNow
+# =========================================================================
+- name: Fechar change request no ServiceNow
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    sn_change_request_number: "{{ sn_change_request_number }}"
+    sn_closure_code: "successful"
+    sn_closure_notes: "Change successfully implemented - Job ID: {{ awx_job_id | default('0') }}"
+
+  tasks:
+    - name: Fechar change request {{ sn_change_request_number }}
+      servicenow.itsm.change_request:
+        state: closed
+        instance:
+          host: "{{ snow_host }}"
+          username: "{{ snow_username }}"
+          password: "{{ snow_password }}"
+        number: "{{ sn_change_request_number }}"
+        close_code: "{{ sn_closure_code }}"
+        close_notes: "{{ sn_closure_notes }}"
+      tags:
+        - servicenow
+        - change
+        - close
+
+    - name: Exibir confirmação de fechamento da change request
+      ansible.builtin.debug:
+        msg: "Change Request {{ sn_change_request_number }} closed successfully by Ansible"
+      tags:
+        - servicenow
+        - change
+        - debug
+
+    - name: Exportar variáveis para workflow
+      ansible.builtin.set_stats:
+        data:
+          sn_change_request_number: "{{ sn_change_request_number }}"
+          sn_change_status: "closed"
+      tags:
+        - servicenow
+        - change
+        - workflow

@@ -1,0 +1,46 @@
+{# ----- guards ----- #}
+{% set R = report | default({}) %}
+{% set OS = R.os | default({}) %}
+{% set SVC = R.service | default({}) %}
+{% set PG = R.postgres | default({}) %}
+
+{
+    "collected_at": "{{ R.collected_at | default('') }}",
+    "host": "{{ R.host | default('') }}",
+
+    "os": {
+        "distro": "{{ OS.distro | default('') }}",
+        "kernel": "{{ OS.kernel | default('') }}",
+        "arch": "{{ OS.arch | default('') }}",
+        "uptime": "{{ OS.uptime | default('') }}",
+        "mem_mb": {{ OS.mem_mb | default(0) }},
+        "cpu_vcpus": {{ OS.cpu_vcpus | default(0) }},
+        "mounts": {{ (OS.mounts | default([])) | tojson }},
+        "sysctl_sample": {{ (OS.sysctl_sample | default([])) | tojson }},
+        "thp": {{ (OS.thp | default('')) | tojson }},
+        "dns": {{ (OS.dns | default('')) | tojson }}
+    },
+
+    "service": {
+        "status": {{ (SVC.status | default('')) | tojson }},
+        "bin_version": {{ (SVC.bin_version | default('')) | tojson }},
+        "dirs": {{ (SVC.dirs | default('')) | tojson }},
+        "network": {{ (SVC.network | default('')) | tojson }}
+    },
+
+    "postgres": {
+        "basics": {{ (PG.basics | default('')) | tojson }},
+        "configs": {{ (PG.configs | default('')) | tojson }},
+        "hba_head": {{ (PG.hba_head | default('')) | tojson }},
+        "accounts": {{ (PG.accounts | default('')) | tojson }},
+        "connections": {{ (PG.connections | default('')) | tojson }},
+        "idle_in_txn": {{ (PG.idle_in_txn | default('')) | tojson }},
+        "db_sizes": {{ (PG.db_sizes | default('')) | tojson }},
+        "disk": {{ (PG.disk | default('')) | tojson }},
+        "wal": {{ (PG.wal | default('')) | tojson }},
+        "logs": {{ (PG.logs | default('')) | tojson }},
+        "extensions_schemas": {{ (PG.extensions_schemas | default('')) | tojson }},
+        "schema_details": {{ (PG.schema_details | default('')) | tojson }},
+        "replication_hot": {{ (PG.replication_hot | default('')) | tojson }}
+    }
+}

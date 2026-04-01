@@ -1,0 +1,165 @@
+---
+# =========================================================================
+# Playbook: Remediacao - Limpeza de disco
+# =========================================================================
+# Variaveis para AAP Survey:
+#   target_host       - Host ou grupo alvo (default: all)
+#   cleanup_tmp_days  - Dias para limpar /tmp (default: 7)
+#   cleanup_logs_days - Dias para limpar logs comprimidos (default: 30)
+# =========================================================================
+# Nota: Algumas tarefas utilizam ansible.builtin.shell para operacoes de
+# limpeza com find/delete e dnf clean, onde nao ha modulo equivalente
+# que atenda ao mesmo escopo. Todas possuem changed_when controlado.
+# =========================================================================
+- name: Remediacao - Limpeza de disco
+  hosts: "{{ target_host | default('all') }}"
+  become: true
+  gather_facts: true
+  vars:
+    cleanup_tmp_days: 7
+    cleanup_logs_days: 30
+
+  tasks:
+    - name: Coletar uso de disco inicial
+      ansible.builtin.command: "df -h /"
+      register: initial_disk_raw
+      changed_when: false
+      tags:
+        - remediation
+        - disk
+        - check
+
+    - name: Extrair percentual de uso de disco inicial
+      ansible.builtin.set_fact:
+        initial_disk_usage: "{{ initial_disk_raw.stdout_lines[-1].split()[4] }}"
+      tags:
+        - remediation
+        - disk
+
+    - name: Exibir uso de disco inicial
+      ansible.builtin.debug:
+        msg: "Initial disk usage: {{ initial_disk_usage }}"
+      tags:
+        - remediation
+        - disk
+        - debug
+
+    - name: Verificar existencia de artefato de demonstracao
+      ansible.builtin.stat:
+        path: /tmp/diskfiller.img
+      register: diskfiller_stat
+      tags:
+        - remediation
+        - disk
+        - check
+
+    - name: Remover artefato de demonstracao se existir
+      ansible.builtin.file:
+        path: /tmp/diskfiller.img
+        state: absent
+      when: diskfiller_stat.stat.exists
+      register: diskfiller_removed
+      tags:
+        - remediation
+        - disk
+        - cleanup
+
+    - name: Informar sobre remocao do artefato de demonstracao
+      ansible.builtin.debug:
+        msg: "Removed /tmp/diskfiller.img: {{ diskfiller_removed.changed }}"
+      when: diskfiller_stat.stat.exists
+      tags:
+        - remediation
+        - disk
+        - debug
+
+    - name: Limpar arquivos antigos em /tmp com mais de dias {{ cleanup_tmp_days }}
+      ansible.builtin.shell: |
+        find /tmp -type f -atime +{{ cleanup_tmp_days }} -delete 2>/dev/null || true
+      changed_when: true
+      register: tmp_cleanup
+      tags:
+        - remediation
+        - disk
+        - cleanup
+
+    - name: Limpar arquivos antigos em /var/tmp com mais de dias {{ cleanup_tmp_days }}
+      ansible.builtin.shell: |
+        find /var/tmp -type f -atime +{{ cleanup_tmp_days }} -delete 2>/dev/null || true
+      changed_when: true
+      register: var_tmp_cleanup
+      tags:
+        - remediation
+        - disk
+        - cleanup
+
+    - name: Limpar logs comprimidos e antigos com mais de dias {{ cleanup_logs_days }}
+      ansible.builtin.shell: |
+        find /var/log -type f \( -name "*.gz" -o -name "*.old" \) -mtime +{{ cleanup_logs_days }} -delete 2>/dev/null || true
+      changed_when: true
+      register: logs_cleanup
+      tags:
+        - remediation
+        - disk
+        - cleanup
+
+    - name: Aplicar vacuum nos logs do journalctl (manter 7 dias)
+      ansible.builtin.command: "journalctl --vacuum-time=7d"
+      register: journalctl_vacuum
+      changed_when: "'Vacuuming done' in journalctl_vacuum.stdout or 'Deleted' in journalctl_stdout | default('')"
+      failed_when: false
+      tags:
+        - remediation
+        - disk
+        - cleanup
+
+    - name: Limpar cache do gerenciador de pacotes
+      ansible.builtin.dnf:
+        autoremove: false
+        state: present
+        update_cache: true
+      changed_when: false
+      failed_when: false
+      tags:
+        - remediation
+        - disk
+        - cleanup
+
+    - name: Coletar uso de disco final
+      ansible.builtin.command: "df -h /"
+      register: final_disk_raw
+      changed_when: false
+      tags:
+        - remediation
+        - disk
+        - check
+
+    - name: Extrair percentual de uso de disco final
+      ansible.builtin.set_fact:
+        final_disk_usage: "{{ final_disk_raw.stdout_lines[-1].split()[4] }}"
+      tags:
+        - remediation
+        - disk
+
+    - name: Exibir uso de disco final
+      ansible.builtin.debug:
+        msg: "Final disk usage: {{ final_disk_usage }}"
+      tags:
+        - remediation
+        - disk
+        - debug
+
+    - name: Exibir relatorio de limpeza de disco
+      ansible.builtin.debug:
+        msg:
+          - "=== DISK CLEANUP REPORT ==="
+          - "Initial usage: {{ initial_disk_usage }}"
+          - "Final usage: {{ final_disk_usage }}"
+          - "Demo artifact removed: {{ diskfiller_removed.changed | default(false) }}"
+          - "Temp files cleaned: /tmp and /var/tmp"
+          - "Old logs cleaned: compressed and .old files"
+          - "Journalctl vacuum: {{ journalctl_vacuum.stdout | default('completed') }}"
+      tags:
+        - remediation
+        - disk
+        - report

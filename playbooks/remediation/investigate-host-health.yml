@@ -1,0 +1,164 @@
+---
+# =========================================================================
+# Playbook: Investigacao de saude do host
+# =========================================================================
+# Variaveis para AAP Survey:
+#   target_host  - Host ou grupo alvo (default: target)
+# =========================================================================
+# Nota: Este playbook utiliza ansible.builtin.shell e ansible.builtin.command
+# em tarefas de coleta de informacoes onde nao existem modulos Ansible
+# equivalentes. Todas sao read-only com changed_when: false.
+# =========================================================================
+- name: Investigacao de saude do host
+  hosts: "{{ target_host | default('target') }}"
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Coletar uptime do sistema
+      ansible.builtin.command: uptime
+      register: system_uptime
+      changed_when: false
+      tags:
+        - investigate
+        - system
+
+    - name: Coletar uso de disco da particao raiz
+      ansible.builtin.command: "df -h /"
+      register: disk_usage_raw
+      changed_when: false
+      tags:
+        - investigate
+        - disk
+
+    - name: Extrair linha de uso de disco
+      ansible.builtin.set_fact:
+        disk_usage: "{{ disk_usage_raw.stdout_lines[-1] }}"
+      tags:
+        - investigate
+        - disk
+
+    - name: Coletar uso de memoria
+      ansible.builtin.shell: "set -o pipefail && free -h | grep Mem"
+      register: memory_usage
+      changed_when: false
+      tags:
+        - investigate
+        - memory
+
+    - name: Listar processos com maior consumo de CPU
+      ansible.builtin.shell: "set -o pipefail && ps aux --sort=-%cpu | head -6 | tail -5"
+      register: top_cpu_procs
+      changed_when: false
+      tags:
+        - investigate
+        - cpu
+
+    - name: Listar processos com maior consumo de memoria
+      ansible.builtin.shell: "set -o pipefail && ps aux --sort=-%mem | head -6 | tail -5"
+      register: top_mem_procs
+      changed_when: false
+      tags:
+        - investigate
+        - memory
+
+    - name: Verificar servicos systemd com falha
+      ansible.builtin.command: "systemctl list-units --failed --no-pager --output=short" # noqa: command-instead-of-module
+      register: failed_services
+      changed_when: false
+      tags:
+        - investigate
+        - services
+
+    - name: Coletar erros recentes do sistema
+      ansible.builtin.command: "journalctl -p err -n 10 --no-pager"
+      register: recent_errors
+      changed_when: false
+      failed_when: false
+      tags:
+        - investigate
+        - logs
+
+    - name: Coletar informacoes de interfaces de rede
+      ansible.builtin.command: "ip addr show"
+      register: network_interfaces
+      changed_when: false
+      tags:
+        - investigate
+        - network
+
+    - name: Coletar tabela de rotas
+      ansible.builtin.command: "ip route show"
+      register: network_routes
+      changed_when: false
+      tags:
+        - investigate
+        - network
+
+    - name: Verificar status do SELinux
+      ansible.builtin.command: getenforce
+      register: selinux_status
+      changed_when: false
+      failed_when: false
+      tags:
+        - investigate
+        - selinux
+
+    - name: Coletar facts de servicos do sistema
+      ansible.builtin.service_facts:
+      tags:
+        - investigate
+        - firewall
+        - httpd
+
+    - name: Verificar status do firewall
+      ansible.builtin.set_fact:
+        firewall_status:
+          stdout: "{{ ansible_facts.services['firewalld.service'].state | default('Not running') }}"
+      tags:
+        - investigate
+        - firewall
+
+    - name: Verificar status do servico httpd
+      ansible.builtin.set_fact:
+        httpd_status:
+          stdout: "{{ ansible_facts.services['httpd.service'].state | default('Not running') }}"
+      tags:
+        - investigate
+        - httpd
+
+    - name: Compilar relatorio completo de saude do host
+      ansible.builtin.debug:
+        msg:
+          - "=== HOST HEALTH INVESTIGATION REPORT ==="
+          - ""
+          - "SYSTEM INFORMATION:"
+          - "  Hostname: {{ ansible_hostname }}"
+          - "  OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "  Kernel: {{ ansible_kernel }}"
+          - "  {{ system_uptime.stdout }}"
+          - ""
+          - "DISK STATUS:"
+          - "  {{ disk_usage }}"
+          - ""
+          - "MEMORY STATUS:"
+          - "  {{ memory_usage.stdout }}"
+          - ""
+          - "TOP CPU-CONSUMING PROCESSES:"
+          - "{{ top_cpu_procs.stdout_lines | map('regex_replace', '^', '  ') | list }}"
+          - ""
+          - "TOP MEMORY-CONSUMING PROCESSES:"
+          - "{{ top_mem_procs.stdout_lines | map('regex_replace', '^', '  ') | list }}"
+          - ""
+          - "FAILED SERVICES:"
+          - "{{ (failed_services.stdout_lines | default(['  None'])) | map('regex_replace', '^', '  ') | list }}"
+          - ""
+          - "RECENT SYSTEM ERRORS:"
+          - "{{ (recent_errors.stdout_lines | default(['  None'])) | map('regex_replace', '^', '  ') | list }}"
+          - ""
+          - "SELINUX STATUS: {{ selinux_status.stdout | default('Not available') }}"
+          - "FIREWALL STATUS: {{ firewall_status.stdout | default('Not running') }}"
+          - "HTTPD STATUS: {{ httpd_status.stdout | default('Not running') }}"
+      tags:
+        - investigate
+        - report

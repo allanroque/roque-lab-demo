@@ -1,0 +1,30 @@
+*****************************************************************
+System Information For Hostname: {{ ansible_hostname }}
+
+- Distribution: {{ ansible_distribution }}
+- DNS Server(s): {{ ansible_dns.nameservers | join(',') }}
+- ipaddr: {{ ansible_all_ipv4_addresses }}
+- Kernel: {{ ansible_kernel }}
+- Memory Installed: {{ ansible_memtotal_mb }}MB
+- Memory Swapfile: {{ ansible_swaptotal_mb }}MB
+- Processors: {{ ansible_processor_count }}
+- Timezone: {{ ansible_date_time.tz }}
+*****************************************************************
+  _______________________________________
+/ UNAUTHORIZED ACCESS TO THIS DEVICE IS   \
+| PROHIBITED    You must have explicit,   |
+| authorized permission to access or      |
+| configure this device. Unauthorized     |
+| attempts and actions to access or use   |
+| this system may result in civil and/or  |
+| criminal penalties. All activities      |
+| performed on this device are logged and |
+\ monitored.                              /
+  ---------------------------------------
+         \   ^__^
+          \  (oo)\_______
+             (__)\       )\/\
+                 ||----w |
+                 ||     ||
+
+----- This Machine has been configured with Ansible! ----%

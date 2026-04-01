@@ -1,0 +1,68 @@
+---
+# =========================================================================
+# Playbook: Criar Change Request no ServiceNow
+# =========================================================================
+# Variáveis para AAP Survey:
+#   sn_short_description - Descrição curta da change
+#   sn_description       - Descrição detalhada da change
+#   sn_impact_value      - Impacto (low, medium, high)
+#   sn_urgency_value     - Urgência (low, medium, high)
+#   sn_category_value    - Categoria (network, hardware, software, etc.)
+# Credenciais (via AAP Credential):
+#   snow_host            - URL da instância ServiceNow
+#   snow_username        - Usuário ServiceNow
+#   snow_password        - Senha ServiceNow
+# =========================================================================
+- name: Criar change request no ServiceNow
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    sn_short_description: "Change Open Via Ansible"
+    sn_description: "Change Open Via Ansible"
+    sn_impact_value: "low"
+    sn_urgency_value: "low"
+    sn_category_value: "network"
+
+  tasks:
+    - name: Criar change request no ServiceNow
+      servicenow.itsm.change_request:
+        state: present
+        instance:
+          host: "{{ snow_host }}"
+          username: "{{ snow_username }}"
+          password: "{{ snow_password }}"
+        short_description: "{{ sn_short_description }}"
+        description: "{{ sn_description }}"
+        impact: "{{ sn_impact_value }}"
+        urgency: "{{ sn_urgency_value }}"
+        category: "{{ sn_category_value }}"
+      register: new_change_request
+      tags:
+        - servicenow
+        - change
+        - create
+
+    - name: Registrar número da change request criada
+      ansible.builtin.set_fact:
+        sn_change_request_number: "{{ new_change_request.record.number }}"
+      tags:
+        - servicenow
+        - change
+
+    - name: Exibir número da change request criada
+      ansible.builtin.debug:
+        var: new_change_request.record.number
+      tags:
+        - servicenow
+        - change
+        - debug
+
+    - name: Exportar número da change request para workflow
+      ansible.builtin.set_stats:
+        data:
+          sn_change_request_number: "{{ new_change_request.record.number }}"
+      tags:
+        - servicenow
+        - change
+        - workflow

@@ -1,0 +1,27 @@
+---
+# Playbook: Configure Message of the Day (MOTD)
+# Variables (AAP Survey):
+#   - (none required)
+# Tags: motd
+
+- name: Configure Message of the Day (MOTD)
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Copy MOTD file to host
+      ansible.builtin.template:
+        src: templates/motd.j2
+        dest: /etc/motd
+        mode: "0644"
+      tags:
+        - motd
+
+    - name: Ensure MOTD file permissions
+      ansible.builtin.file:
+        path: /etc/motd
+        mode: "0644"
+        state: file
+      tags:
+        - motd

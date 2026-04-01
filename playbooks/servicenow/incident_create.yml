@@ -1,0 +1,66 @@
+---
+# =========================================================================
+# Playbook: Criar Incidente no ServiceNow
+# =========================================================================
+# Variáveis para AAP Survey:
+#   sn_short_description - Descrição curta do incidente
+#   sn_description       - Descrição detalhada do incidente
+#   sn_impact            - Impacto (low, medium, high)
+#   sn_urgency           - Urgência (low, medium, high)
+# Credenciais (via AAP Credential):
+#   snow_host            - URL da instância ServiceNow
+#   snow_username        - Usuário ServiceNow
+#   snow_password        - Senha ServiceNow
+# =========================================================================
+- name: Criar incidente no ServiceNow
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    sn_short_description: ""
+    sn_description: ""
+    sn_impact: "low"
+    sn_urgency: "low"
+
+  tasks:
+    - name: Criar novo incidente no ServiceNow
+      servicenow.itsm.incident:
+        state: new
+        instance:
+          host: "{{ snow_host }}"
+          username: "{{ snow_username }}"
+          password: "{{ snow_password }}"
+        caller: "{{ snow_username }}"
+        short_description: "{{ sn_short_description }}"
+        description: "{{ sn_description }}"
+        impact: "{{ sn_impact }}"
+        urgency: "{{ sn_urgency }}"
+      register: new_incident
+      tags:
+        - servicenow
+        - incident
+        - create
+
+    - name: Registrar número do incidente criado
+      ansible.builtin.set_fact:
+        sn_incident_number: "{{ new_incident.record.number }}"
+      tags:
+        - servicenow
+        - incident
+
+    - name: Exibir número do incidente criado
+      ansible.builtin.debug:
+        var: new_incident.record.number
+      tags:
+        - servicenow
+        - incident
+        - debug
+
+    - name: Exportar número do incidente para workflow
+      ansible.builtin.set_stats:
+        data:
+          sn_incident_number: "{{ new_incident.record.number }}"
+      tags:
+        - servicenow
+        - incident
+        - workflow

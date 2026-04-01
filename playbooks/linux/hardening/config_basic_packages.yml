@@ -1,0 +1,44 @@
+---
+# Playbook: Manage Basic Packages on System
+# Variables (AAP Survey):
+#   - pkgs_to_install: list of packages to install
+#   - pkgs_to_remove: list of packages to remove
+# Tags: packages
+
+- name: Manage Basic Packages on System
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    pkgs_to_install:
+      - bind-utils
+      - net-tools
+      - vim
+      - chrony
+      - wget
+      - sos
+      - yum-utils
+      - sysstat
+      - tar
+      - unzip
+      - audit
+      - cockpit
+      - insights-client
+    pkgs_to_remove:
+      - telnet
+
+  tasks:
+    - name: Install important packages
+      ansible.builtin.dnf:
+        name: "{{ pkgs_to_install }}"
+        state: present
+      tags:
+        - packages
+
+    - name: Remove unwanted packages
+      ansible.builtin.dnf:
+        name: "{{ pkgs_to_remove }}"
+        state: absent
+      tags:
+        - packages

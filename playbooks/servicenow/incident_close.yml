@@ -1,0 +1,61 @@
+---
+# =========================================================================
+# Playbook: Fechar Incidente no ServiceNow
+# =========================================================================
+# Variáveis para AAP Survey:
+#   sn_incident_number  - Número do incidente a ser fechado (ex: INC0010001)
+#   sn_close_code       - Código de fechamento (default: "Solved (Work Around)")
+#   sn_close_notes      - Notas de fechamento (preenchido automaticamente)
+#   ac_job_id           - ID do job no AAP (injetado automaticamente)
+# Credenciais (via AAP Credential):
+#   snow_host            - URL da instância ServiceNow
+#   snow_username        - Usuário ServiceNow
+#   snow_password        - Senha ServiceNow
+# =========================================================================
+- name: Fechar incidente no ServiceNow
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    sn_close_code: "Solved (Work Around)"
+    sn_close_notes: >-
+      This incident has been resolved through automated means via EDA Ansible,
+      Job ID: {{ ac_job_id | default('0') }}.
+      As a result, the ticket will now be marked as closed.
+    sn_incident_number: "{{ sn_incident_number }}"
+
+  tasks:
+    - name: Fechar incidente {{ sn_incident_number }}
+      servicenow.itsm.incident:
+        instance:
+          host: "{{ snow_host }}"
+          username: "{{ snow_username }}"
+          password: "{{ snow_password }}"
+        state: closed
+        close_code: "{{ sn_close_code }}"
+        close_notes: "{{ sn_close_notes }}"
+        number: "{{ sn_incident_number }}"
+        other:
+          work_notes: "{{ sn_close_notes }}"
+      tags:
+        - servicenow
+        - incident
+        - close
+
+    - name: Exibir link do job de self-healing
+      ansible.builtin.debug:
+        msg: "Job URL: {{ ac_job_id | default('0') }}"
+      tags:
+        - servicenow
+        - incident
+        - debug
+
+    - name: Exportar variáveis para workflow
+      ansible.builtin.set_stats:
+        data:
+          sn_incident_number: "{{ sn_incident_number }}"
+          sn_incident_status: "closed"
+      tags:
+        - servicenow
+        - incident
+        - workflow

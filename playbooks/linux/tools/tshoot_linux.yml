@@ -1,0 +1,52 @@
+---
+# Playbook: Gather debug info for troubleshooting
+# No user variables required - collects system performance data
+- name: Gather debug info
+  hosts: all
+  become: true
+
+  tasks:
+    - name: Gather recent vmstat info
+      ansible.builtin.command: /bin/vmstat 1 5
+      register: vmstat
+      changed_when: false
+      tags:
+        - troubleshoot
+        - vmstat
+
+    - name: Gather top CPU hogs
+      ansible.builtin.command: ps -eo user,pid,size,pcpu,cmd --sort=-pcpu
+      register: pscpu
+      changed_when: false
+      tags:
+        - troubleshoot
+        - cpu
+
+    - name: Gather top memory hogs
+      ansible.builtin.command: ps -eo user,pid,size,pcpu,cmd --sort=-size
+      register: pssize
+      changed_when: false
+      tags:
+        - troubleshoot
+        - memory
+
+    - name: Show swap and wait states
+      ansible.builtin.debug:
+        var: vmstat.stdout_lines
+      tags:
+        - troubleshoot
+        - vmstat
+
+    - name: Show top 3 CPU hogs
+      ansible.builtin.debug:
+        var: pscpu.stdout_lines[:4]
+      tags:
+        - troubleshoot
+        - cpu
+
+    - name: Show top 3 memory hogs
+      ansible.builtin.debug:
+        var: pssize.stdout_lines[:4]
+      tags:
+        - troubleshoot
+        - memory

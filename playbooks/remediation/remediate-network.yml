@@ -1,0 +1,119 @@
+---
+# =========================================================================
+# Playbook: Remediacao - Problemas de rede (iptables)
+# =========================================================================
+# Variaveis para AAP Survey:
+#   target_host  - Host ou grupo alvo (default: target)
+# =========================================================================
+# Nota: Este playbook utiliza ansible.builtin.shell para manipulacao de
+# regras iptables onde nao existe modulo Ansible equivalente para
+# inspecao e remocao condicional de regras. Operacoes de leitura possuem
+# changed_when: false.
+# =========================================================================
+- name: Remediacao - Problemas de rede (iptables)
+  hosts: "{{ target_host | default('target') }}"
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Verificar regras iptables problematicas (DROP/REJECT)
+      ansible.builtin.shell: "set -o pipefail && iptables -L -n | grep -E 'DROP|REJECT' || echo 'No DROP/REJECT rules found'"
+      register: iptables_rules_before
+      changed_when: false
+      tags:
+        - remediation
+        - network
+        - check
+
+    - name: Exibir regras iptables problematicas
+      ansible.builtin.debug:
+        msg: "Current problematic iptables rules:\n{{ iptables_rules_before.stdout }}"
+      tags:
+        - remediation
+        - network
+        - debug
+
+    - name: Listar numeros das regras DROP
+      ansible.builtin.shell: |
+        set -o pipefail
+        iptables -L INPUT -n --line-numbers | grep DROP | awk '{print $1}' | sort -rn
+      register: drop_rule_numbers
+      changed_when: false
+      tags:
+        - remediation
+        - network
+        - check
+
+    - name: Remover regras DROP do iptables
+      ansible.builtin.shell: |
+        set -o pipefail
+        for rule_num in $(iptables -L INPUT -n --line-numbers | grep DROP | awk '{print $1}' | sort -rn); do
+          iptables -D INPUT $rule_num 2>/dev/null || true
+        done
+      changed_when: true
+      register: rules_removed
+      when: drop_rule_numbers.stdout | length > 0
+      tags:
+        - remediation
+        - network
+        - cleanup
+
+    - name: Exibir resultado da remocao de regras
+      ansible.builtin.debug:
+        msg: "{{ 'DROP rules removed' if rules_removed.changed | default(false) else 'No DROP rules to remove' }}"
+      tags:
+        - remediation
+        - network
+        - debug
+
+    - name: Restaurar politicas padrao do iptables
+      ansible.builtin.shell: |
+        iptables -P INPUT ACCEPT 2>/dev/null || true
+        iptables -P FORWARD ACCEPT 2>/dev/null || true
+        iptables -P OUTPUT ACCEPT 2>/dev/null || true
+      changed_when: true
+      register: policies_reset
+      tags:
+        - remediation
+        - network
+        - cleanup
+
+    - name: Testar conectividade de rede
+      ansible.builtin.command: "ping -c 2 8.8.8.8"
+      register: network_test
+      changed_when: false
+      ignore_errors: true
+      tags:
+        - remediation
+        - network
+        - check
+
+    - name: Exibir resultado do teste de conectividade
+      ansible.builtin.debug:
+        msg: "Network test: {{ 'Success' if network_test.rc == 0 else 'Failed' }}"
+      tags:
+        - remediation
+        - network
+        - debug
+
+    - name: Verificar regras iptables apos remediacao
+      ansible.builtin.shell: "set -o pipefail && iptables -L -n | grep -E 'DROP|REJECT' || echo 'No DROP/REJECT rules found'"
+      register: iptables_rules_after
+      changed_when: false
+      tags:
+        - remediation
+        - network
+        - check
+
+    - name: Exibir relatorio de remediacao de rede
+      ansible.builtin.debug:
+        msg:
+          - "=== NETWORK REMEDIATION REPORT ==="
+          - "Rules before remediation: {{ iptables_rules_before.stdout | default('None found') }}"
+          - "Policies reset to ACCEPT: true"
+          - "Rules after remediation: {{ iptables_rules_after.stdout }}"
+          - "Network connectivity: {{ 'Success' if network_test.rc == 0 else 'Failed' }}"
+      tags:
+        - remediation
+        - network
+        - report

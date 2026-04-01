@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <title>PG Health — {{ report.host }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="styles.css?v=8" />
+  <script defer src="app.js?v=8"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">PG Health</div>
+    <nav class="nav">
+      <a href="#core">Core</a><a href="#service">Service</a><a href="#network">Network</a>
+      <a href="#auth">Auth</a><a href="#db">DB</a><a href="#access">Access</a>
+      <a href="#conn">Conn</a><a href="#storage">Storage/WAL</a>
+      <a href="#schema">Schemas</a><a href="#repl">Repl</a><a href="#logs">Logs</a>
+    </nav>
+    <div class="meta"><span id="host">—</span><span class="dot"></span><span id="collected">—</span></div>
+  </header>
+
+  <main class="wrap">
+    <section class="hero">
+      <h1 id="hero-host">{{ report.host }}</h1>
+      <p>Coletado em <span id="collected-hero">{{ report.collected_at }}</span></p>
+    </section>
+
+    <!-- CORE -->
+    <section id="core" class="card">
+      <div class="card__head"><h2>Core (SO)</h2><span class="badge">Overview</span></div>
+      <div class="grid-2">
+        <table class="kv"><tbody id="os-kv"></tbody></table>
+        <table class="kv"><tbody id="os-extra"></tbody></table>
+      </div>
+      <div class="hint">DNS/Resolv</div>
+      <pre id="dns-info" class="codeblock small">—</pre>
+    </section>
+
+    <!-- SERVICE & VERSION -->
+    <section id="service" class="card">
+      <div class="card__head"><h2>Service & Version</h2><span class="badge accent">PostgreSQL</span></div>
+      <div class="grid-3">
+        <div><div class="hint">Status</div><pre id="svc-status" class="codeblock small">—</pre></div>
+        <div><div class="hint">Binary Version</div><pre id="svc-bin" class="codeblock small">—</pre></div>
+        <div><div class="hint">Dirs & Ownership</div><pre id="svc-dirs" class="codeblock small">—</pre></div>
+      </div>
+    </section>
+
+    <!-- NETWORK -->
+    <section id="network" class="card">
+      <div class="card__head"><h2>Network & Ports</h2><span class="badge">5432 / Firewall / SELinux</span></div>
+      <pre id="net-info" class="codeblock">—</pre>
+    </section>
+
+    <!-- AUTH -->
+    <section id="auth" class="card">
+      <div class="card__head"><h2>Authentication</h2><span class="badge">pg_hba.conf (head)</span></div>
+      <pre id="hba-head" class="codeblock">—</pre>
+    </section>
+
+    <!-- DB BASICS -->
+    <section id="db" class="card">
+      <div class="card__head"><h2>Database Basics</h2><span class="badge">Basics</span></div>
+      <div class="grid-2">
+        <table class="kv"><tbody id="db-basics"></tbody></table>
+        <table class="kv"><tbody id="db-activity"></tbody></table>
+      </div>
+      <div class="hint">Config params</div>
+      <pre id="pg-configs" class="codeblock small">—</pre>
+    </section>
+
+    <!-- ACCESS -->
+    <section id="access" class="card">
+      <div class="card__head"><h2>Access (DBs & Roles)</h2><span class="badge">Ownership</span></div>
+      <pre id="pg-accounts" class="codeblock">—</pre>
+    </section>
+
+    <!-- CONNECTIONS -->
+    <section id="conn" class="card">
+      <div class="card__head"><h2>Connections</h2><span class="badge">Activity</span></div>
+      <pre id="pg-conns" class="codeblock">—</pre>
+      <div class="hint">Top 10 idle in transaction</div>
+      <pre id="pg-idle" class="codeblock small">—</pre>
+    </section>
+
+    <!-- STORAGE / SIZES / WAL -->
+    <section id="storage" class="card">
+      <div class="card__head"><h2>Storage & WAL</h2><span class="badge">Sizes</span></div>
+      <div class="grid-2">
+        <div><div class="hint">Tamanho por DB</div><pre id="db-sizes" class="codeblock">—</pre></div>
+        <div><div class="hint">Filesystem (data dir)</div><pre id="pg-disk" class="codeblock">—</pre></div>
+      </div>
+      <div class="hint">WAL & Checkpoints</div>
+      <pre id="pg-wal" class="codeblock small">—</pre>
+    </section>
+
+    <!-- SCHEMAS / EXTENSIONS -->
+    <section id="schema" class="card">
+      <div class="card__head"><h2>Schemas & Extensions</h2><span class="badge">DB Target</span></div>
+      <pre id="pg-ext" class="codeblock">—</pre>
+      <div class="hint">Schema details</div>
+      <pre id="pg-schema" class="codeblock small">—</pre>
+    </section>
+
+    <!-- REPLICATION -->
+    <section id="repl" class="card">
+      <div class="card__head"><h2>Replication & Hot Tables</h2><span class="badge">Overview</span></div>
+      <pre id="pg-repl" class="codeblock">—</pre>
+    </section>
+
+    <!-- LOGS -->
+    <section id="logs" class="card">
+      <div class="card__head"><h2>Recent Errors (log)</h2><span class="badge warn">Logs</span></div>
+      <pre id="pg-logs" class="codeblock">—</pre>
+    </section>
+
+    <!-- RAW JSON -->
+    <section id="raw" class="card">
+      <div class="card__head">
+        <h2>JSON cru</h2><a class="link" href="health.json" target="_blank" rel="noreferrer">/pg-health/health.json</a>
+      </div>
+      <details>
+        <summary>Mostrar/ocultar JSON</summary>
+        <pre id="raw-json" class="codeblock small">—</pre>
+      </details>
+    </section>
+  </main>
+
+  <footer class="foot"><span>Gerado por Ansible • Página local</span></footer>
+</body>
+</html>

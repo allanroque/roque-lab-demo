@@ -1,0 +1,129 @@
+---
+# =============================================================================
+# Playbook: Remover registro DNS (A e PTR)
+# Descricao: Remove um registro A e seu respectivo PTR do servidor DNS.
+#            Se host_ip nao for informado, resolve automaticamente via DNS.
+#
+# Variaveis para Survey do AAP:
+#   host_name        - FQDN do host (ex: web01.aroque.com.br) [obrigatorio]
+#   host_ip          - Endereco IP do host (opcional, resolvido via DNS se vazio)
+#   dns_server       - IP do servidor DNS (default: 192.168.100.11)
+#   dns_zone         - Zona DNS direta (default: aroque.com.br)
+#   dns_reverse_zone - Zona DNS reversa (default: 100.168.192.in-addr.arpa)
+#   dns_key_name     - Nome da chave TSIG (default: ansible-key)
+#   dns_key_secret   - Segredo da chave TSIG  # Configurado no AAP Controller
+#   dns_key_algorithm - Algoritmo da chave (default: hmac-sha256)
+# =============================================================================
+- name: Atualizar DNS - Remover registro A e PTR
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    host_name: ""
+    host_ip: ""
+    dns_server: "192.168.100.11"
+    dns_zone: "aroque.com.br"
+    dns_reverse_zone: "100.168.192.in-addr.arpa"
+    dns_key_name: "ansible-key"
+    dns_key_secret: ""  # Configurado no AAP Controller
+    dns_key_algorithm: "hmac-sha256"
+
+  tasks:
+    - name: Validar que host_name foi informado
+      ansible.builtin.assert:
+        that:
+          - host_name | length > 0
+        fail_msg: "A variavel host_name e obrigatoria"
+        quiet: true
+      tags:
+        - validacao
+        - dns
+
+    - name: Resolver host_name via DNS direto
+      ansible.builtin.set_fact:
+        resolved_ip: "{{ lookup('community.general.dig', host_name, '@' + dns_server) }}"
+      tags:
+        - dns
+        - resolucao
+
+    - name: Exibir resultado da resolucao direta
+      ansible.builtin.debug:
+        msg: "Hostname {{ host_name }} resolvido para {{ resolved_ip | default('N/A') }}"
+      tags:
+        - dns
+        - debug
+
+    - name: Definir host_ip a partir do DNS quando nao informado
+      ansible.builtin.set_fact:
+        host_ip: "{{ resolved_ip }}"
+      when: host_ip is not defined or host_ip == none or host_ip == ""
+      tags:
+        - dns
+        - resolucao
+
+    - name: Resolver IP via DNS reverso
+      # Usando command pois nao existe modulo Ansible nativo para consulta DNS reversa
+      ansible.builtin.command:
+        cmd: "dig -x {{ host_ip | default(resolved_ip, true) }} @{{ dns_server }} +short"
+      register: dig_reverse_result
+      changed_when: false
+      failed_when: false
+      tags:
+        - dns
+        - resolucao
+
+    - name: Exibir resultado da resolucao reversa
+      ansible.builtin.debug:
+        msg: "IP {{ host_ip | default('') }} resolvido para {{ dig_reverse_result.stdout | default('N/A') | trim }}"
+      tags:
+        - dns
+        - debug
+
+    - name: Remover registro A do DNS para {{ host_name }}
+      community.general.nsupdate:
+        server: "{{ dns_server }}"
+        zone: "{{ dns_zone }}"
+        record: "{{ host_name.split('.')[0] }}"
+        type: A
+        value: "{{ host_ip | default(resolved_ip, true) }}"
+        ttl: 300
+        key_name: "{{ dns_key_name }}"
+        key_secret: "{{ dns_key_secret }}"
+        key_algorithm: "{{ dns_key_algorithm }}"
+        state: absent
+      tags:
+        - dns
+        - registro_a
+
+    - name: Remover registro PTR do DNS reverso
+      community.general.nsupdate:
+        server: "{{ dns_server }}"
+        zone: "{{ dns_reverse_zone }}"
+        record: "{{ (host_ip | default(resolved_ip, true)).split('.')[-1] }}.{{ dns_reverse_zone }}"
+        type: PTR
+        value: "{{ host_name.split('.')[0] }}"
+        ttl: 300
+        key_name: "{{ dns_key_name }}"
+        key_secret: "{{ dns_key_secret }}"
+        key_algorithm: "{{ dns_key_algorithm }}"
+        state: absent
+      tags:
+        - dns
+        - registro_ptr
+
+    - name: Exibir IP e hostname removidos
+      ansible.builtin.debug:
+        msg: "Registro DNS removido - {{ host_name }} / {{ host_ip }}"
+      tags:
+        - dns
+        - debug
+
+    - name: Exportar variaveis para proximo job template
+      ansible.builtin.set_stats:
+        data:
+          host_ip: "{{ host_ip }}"
+          host_name: "{{ host_name }}"
+          hostname: "{{ host_name }}"
+      tags:
+        - dns
+        - export

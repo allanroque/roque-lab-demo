@@ -1,0 +1,99 @@
+---
+# =========================================================================
+# Playbook: Notificacao ChatOps via Webhook (Slack/Mattermost)
+# =========================================================================
+# Variaveis para AAP Survey:
+#   webhook_url  - URL do webhook (Slack/Mattermost) [obrigatorio]
+#   channel      - Canal de destino (opcional)
+#   message      - Mensagem a enviar [obrigatorio]
+#   severity     - Severidade: critical, warning, info, resolved (default: info)
+#   alertname    - Nome do alerta (opcional)
+#   instance     - Instancia afetada (opcional)
+# =========================================================================
+- name: Enviar notificacao ChatOps via webhook
+  hosts: localhost
+  gather_facts: true
+  vars:
+    webhook_url: ""
+    channel: ""
+    message: ""
+    severity: "info"
+    alertname: ""
+    instance: ""
+    severity_emoji:
+      critical: "CRITICAL"
+      warning: "WARNING"
+      info: "INFO"
+      resolved: "RESOLVED"
+
+  tasks:
+    - name: Validar variaveis obrigatorias
+      ansible.builtin.assert:
+        that:
+          - webhook_url | length > 0
+          - message | length > 0
+        fail_msg: "As variaveis webhook_url e message sao obrigatorias"
+        quiet: true
+      tags:
+        - chatops
+        - validacao
+
+    - name: Preparar payload da notificacao
+      ansible.builtin.set_fact:
+        notification_payload:
+          text: "[{{ severity_emoji[severity] | default('INFO') }}] {{ alertname | default('Alert') }} - {{ severity | upper }}"
+          attachments:
+            - color: "{{ 'danger' if severity == 'critical' else 'warning' if severity == 'warning' else 'good' }}"
+              title: "{{ alertname | default('Alert') }}"
+              text: "{{ message }}"
+              fields:
+                - title: "Severity"
+                  value: "{{ severity | upper }}"
+                  short: true
+                - title: "Instance"
+                  value: "{{ instance | default('N/A') }}"
+                  short: true
+                - title: "Channel"
+                  value: "{{ channel | default('default') }}"
+                  short: true
+                - title: "Timestamp"
+                  value: "{{ ansible_date_time.iso8601 }}"
+                  short: true
+      tags:
+        - chatops
+
+    - name: Enviar notificacao via webhook
+      ansible.builtin.uri:
+        url: "{{ webhook_url }}"
+        method: POST
+        body_format: json
+        body: "{{ notification_payload }}"
+        status_code: 200
+      register: webhook_response
+      changed_when: false
+      ignore_errors: true
+      tags:
+        - chatops
+        - notify
+
+    - name: Exibir resultado da notificacao
+      ansible.builtin.debug:
+        msg:
+          - "=== CHATOPS NOTIFICATION REPORT ==="
+          - "Webhook URL: {{ webhook_url | regex_replace('(https://[^/]+/).*', '\\1***') }}"
+          - "Severity: {{ severity }}"
+          - "Alert: {{ alertname }}"
+          - "Instance: {{ instance }}"
+          - "Status: {{ 'Success' if webhook_response is defined and webhook_response.status | default(0) == 200 else 'Failed' }}"
+          - "Response code: {{ webhook_response.status | default('N/A') }}"
+      tags:
+        - chatops
+        - debug
+
+    - name: Avisar sobre falha na entrega da notificacao
+      ansible.builtin.debug:
+        msg: "Warning: Webhook delivery may have failed"
+      when: webhook_response is failed
+      tags:
+        - chatops
+        - debug

@@ -1,0 +1,47 @@
+---
+# Playbook: Master hardening playbook - imports all hardening configurations
+# Variables (AAP Survey):
+#   - (none required - individual playbooks define their own variables)
+# Tags: hardening
+
+- name: Importar configuração de hardening base
+  ansible.builtin.import_playbook: "config_basic_packages.yml"
+
+- name: Configurar serviços essenciais
+  ansible.builtin.import_playbook: "config_basic_services.yml"
+
+- name: Configurar logging do Ansible
+  ansible.builtin.import_playbook: "config_ansible_log.yml"
+
+- name: Configurar motd
+  ansible.builtin.import_playbook: "config_motd.yml"
+
+- name: Configurar agente virt
+  ansible.builtin.import_playbook: "config_agent_virt.yml"
+
+- name: Configurar SELinux
+  ansible.builtin.import_playbook: "config_selinux.yml"
+
+- name: Configurar Cockpit
+  ansible.builtin.import_playbook: "config_cockpit.yml"
+
+- name: Configurar Red Hat Insights
+  ansible.builtin.import_playbook: "config_redhat_insights.yml"
+
+- name: Configurar Chrony
+  ansible.builtin.import_playbook: "config-chrony.yml"
+
+- name: Configurar parâmetros de kernel
+  ansible.builtin.import_playbook: "config_kernel_parameters.yml"
+
+- name: Configurar usuários de serviço
+  ansible.builtin.import_playbook: "config_service_users.yml"
+
+- name: Configurar node exporter
+  ansible.builtin.import_playbook: "config_node_exporter.yml"
+
+#  - name: Configurar Promtail
+#    ansible.builtin.import_playbook: "promtail_agent.yml"
+
+- name: Coletar informações do ambiente Ansible
+  ansible.builtin.import_playbook: "env_ansible.yml"

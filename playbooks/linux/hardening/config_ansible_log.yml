@@ -1,0 +1,35 @@
+---
+# Playbook: Setup Automation Log Directory
+# Variables (AAP Survey):
+#   - (none required)
+# Tags: logging
+
+- name: Setup Automation Log Directory
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Create directory for automation logs
+      ansible.builtin.file:
+        path: /var/log/ansible
+        state: directory
+        mode: "0755"
+        owner: ansible
+        group: root
+      tags:
+        - logging
+
+    - name: Verify directory creation
+      ansible.builtin.stat:
+        path: /var/log/ansible
+      register: log_dir
+      tags:
+        - logging
+
+    - name: Show directory details
+      ansible.builtin.debug:
+        msg: "Directory /var/log/ansible created with permissions {{ log_dir.stat.mode }}"
+      when: log_dir.stat.exists
+      tags:
+        - logging

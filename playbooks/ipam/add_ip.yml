@@ -1,0 +1,86 @@
+---
+# =============================================================================
+# Playbook: Registrar endereco IP no IPAM (NetBox)
+# Descricao: Cria um novo registro de IP no NetBox com FQDN e metadados associados.
+#
+# Variaveis para Survey do AAP:
+#   host_name        - Nome curto do host (ex: server01) [obrigatorio]
+#   host_domain      - Dominio do host (default: aroque.com.br)
+#   host_ip          - Endereco IP a registrar (ex: 192.168.100.60) [obrigatorio]
+#   host_type        - Tipo/role do IP no IPAM (default: VIP)
+#   host_description - Descricao do registro (default: Configured by Ansible)
+#   net_cidr         - Mascara CIDR da rede (default: 24)
+#   netbox_url       - URL do NetBox  # Configurado no AAP Controller
+#   netbox_token     - Token de autenticacao do NetBox  # Configurado no AAP Controller
+# =============================================================================
+- name: Registrar endereco IP no IPAM (NetBox)
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    host_name: ""
+    host_domain: "aroque.com.br"
+    host_ip: ""
+    host_type: "VIP"
+    host_description: "Configured by Ansible"
+    net_cidr: "24"
+    netbox_url: ""   # Configurado no AAP Controller
+    netbox_token: ""  # Configurado no AAP Controller
+
+  tasks:
+    - name: Validar variaveis obrigatorias
+      ansible.builtin.assert:
+        that:
+          - host_name | length > 0
+          - host_ip | length > 0
+          - netbox_url | length > 0
+          - netbox_token | length > 0
+        fail_msg: "As variaveis host_name, host_ip, netbox_url e netbox_token sao obrigatorias"
+        quiet: true
+      tags:
+        - validacao
+        - ipam
+
+    - name: Construir FQDN do host
+      ansible.builtin.set_fact:
+        host_fqdn: "{{ host_name.split('.')[0] }}.{{ host_domain }}"
+      tags:
+        - ipam
+
+    - name: Registrar IP {{ host_ip }} no IPAM para {{ host_name }}
+      netbox.netbox.netbox_ip_address:
+        netbox_url: "{{ netbox_url }}"
+        netbox_token: "{{ netbox_token }}"
+        data:
+          address: "{{ host_ip }}/{{ net_cidr }}"
+          dns_name: "{{ host_fqdn }}"
+          description: "{{ host_description }}"
+          role: "{{ host_type }}"
+          status: active
+        state: present
+        validate_certs: false
+      register: host_ip_output
+      tags:
+        - ipam
+        - registro
+
+    - name: Exibir resposta do IPAM
+      ansible.builtin.debug:
+        var: host_ip_output
+      tags:
+        - ipam
+        - debug
+
+    - name: Extrair IP retornado pelo IPAM
+      ansible.builtin.set_fact:
+        host_ip: "{{ host_ip_output.ip_address.address.split('/')[0] }}"
+      tags:
+        - ipam
+
+    - name: Exportar ID do job para rastreabilidade
+      ansible.builtin.set_stats:
+        data:
+          ac_job_id: "{{ awx_job_id | default('0') }}"
+      tags:
+        - ipam
+        - export
