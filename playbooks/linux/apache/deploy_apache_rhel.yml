@@ -13,6 +13,16 @@
     http_url: "http://{{ ansible_fqdn | default(inventory_hostname) }}"
 
   tasks:
+    - name: Parar e desabilitar Nginx se estiver ativo (conflito porta 80)
+      ansible.builtin.systemd:
+        name: nginx
+        state: stopped
+        enabled: false
+      failed_when: false
+      tags:
+        - apache
+        - pre
+
     - name: Instalar versao mais recente do Apache
       ansible.builtin.dnf:
         name: httpd
