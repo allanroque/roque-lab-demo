@@ -60,17 +60,6 @@
         - apache
         - config
 
-    - name: Copiar logo do Ansible para web root
-      ansible.builtin.copy:
-        src: logo-rh-ansible-automation.png
-        dest: /var/www/html/logo-rh-ansible-automation.png
-        owner: root
-        group: root
-        mode: "0644"
-      tags:
-        - apache
-        - config
-
     - name: Fazer deploy do index.html via template
       ansible.builtin.template:
         src: index.html.j2
