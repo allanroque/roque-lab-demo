@@ -13,8 +13,8 @@ BASE = "https://aap01.aroque.com.br/api/controller/v2"
 ORG_ID = 15
 CRED_AWS = 36
 CRED_SSH_AWS = 33
-EE_TERRAFORM = 11
-EE_CP = 5
+# ee-demo-lab-roque (quay.io/allanroque/ee-terraform:latest) — todos os JTs AWS/cloud ROQUE
+EE_ROQUE_CLOUD = 13
 INV_LAB = 26
 
 CTX = ssl.create_default_context()
@@ -31,7 +31,7 @@ AWS_PROJECT = {
     "scm_branch": "main",
     "scm_clean": True,
     "scm_update_on_launch": True,
-    "default_environment": EE_TERRAFORM,
+        "default_environment": EE_ROQUE_CLOUD,
 }
 
 DR_PROJECT = {
@@ -43,7 +43,7 @@ DR_PROJECT = {
     "scm_branch": "main",
     "scm_clean": True,
     "scm_update_on_launch": True,
-    "default_environment": EE_CP,
+        "default_environment": EE_ROQUE_CLOUD,
 }
 
 # Surveys copiados dos job templates SRE (270, 272, 271, 274–277)
@@ -522,7 +522,7 @@ def main():
         "AWS-PROVISION-INFRA",
         "playbooks/provisioning-aws-infra.yml",
         INV_LAB,
-        EE_TERRAFORM,
+        EE_ROQUE_CLOUD,
         False,
         [CRED_AWS],
         [label_aws, label_cloud],
@@ -533,7 +533,7 @@ def main():
         "AWS-PROVISION-EC2",
         "playbooks/provisioning-aws-ec2.yml",
         INV_LAB,
-        EE_TERRAFORM,
+        EE_ROQUE_CLOUD,
         False,
         [CRED_AWS, CRED_SSH_AWS],
         [label_aws, label_cloud],
@@ -544,7 +544,7 @@ def main():
         "AWS-TEARDOWN",
         "playbooks/teardown-aws.yml",
         INV_LAB,
-        EE_CP,
+        EE_ROQUE_CLOUD,
         False,
         [CRED_AWS],
         [label_aws, label_cloud],
@@ -555,10 +555,10 @@ def main():
         "POSTGRES-DEPLOY-LINUX",
         "playbooks/configure-postgres.yml",
         inv_aws,
-        EE_TERRAFORM,
+        EE_ROQUE_CLOUD,
         True,
         [CRED_SSH_AWS],
-        [label_aws, label_cloud, label_deploy, label_linux],
+        [label_deploy, label_linux],
     )
 
     jt_ids["APACHE-DEPLOY-LINUX"] = upsert_jt(
@@ -566,10 +566,10 @@ def main():
         "APACHE-DEPLOY-LINUX",
         "playbooks/configure-apache.yml",
         inv_aws,
-        EE_TERRAFORM,
+        EE_ROQUE_CLOUD,
         True,
         [CRED_SSH_AWS],
-        [label_aws, label_cloud, label_deploy, label_linux],
+        [label_deploy, label_linux],
     )
 
     jt_ids["DEPLOY-NGINX-LINUX"] = upsert_jt(
@@ -577,10 +577,10 @@ def main():
         "DEPLOY-NGINX-LINUX",
         "playbooks/configure-nginx.yml",
         INV_LAB,
-        EE_TERRAFORM,
+        EE_ROQUE_CLOUD,
         True,
         [CRED_SSH_AWS],
-        [label_aws, label_cloud, label_deploy, label_linux],
+        [label_deploy, label_linux],
     )
 
     jt_ids["DEPLOY-APP-LINUX"] = upsert_jt(
@@ -588,10 +588,10 @@ def main():
         "DEPLOY-APP-LINUX",
         "playbooks/configure-app.yml",
         inv_aws,
-        EE_TERRAFORM,
+        EE_ROQUE_CLOUD,
         True,
         [CRED_SSH_AWS],
-        [label_aws, label_cloud, label_deploy, label_linux],
+        [label_deploy, label_linux],
     )
 
     print("=== 5) DEPLOY-NODEJS-LINUX (PROJ-GIT-DR-ROQUE) ===")
@@ -603,7 +603,7 @@ def main():
         "project": dr_pid,
         "playbook": "deploy-backend.yml",
         "verbosity": 1,
-        "execution_environment": EE_CP,
+        "execution_environment": EE_ROQUE_CLOUD,
         "become_enabled": True,
         "diff_mode": True,
         "survey_enabled": False,
@@ -618,7 +618,7 @@ def main():
         nj = p["id"]
         print(f"  Criado DEPLOY-NODEJS-LINUX id={nj}")
     associate_cred(nj, CRED_SSH_AWS)
-    for lid in (label_aws, label_cloud, label_deploy, label_linux):
+    for lid in (label_deploy, label_linux):
         associate_label(nj, lid)
     jt_ids["DEPLOY-NODEJS-LINUX"] = nj
 

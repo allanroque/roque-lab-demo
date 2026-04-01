@@ -30,7 +30,8 @@ BASE = f"{CONTROLLER_HOST.rstrip('/')}/api/controller/v2"
 ORG_SRE = 2
 ORG_ROQUE = 15
 CRED_TYPE_AAP = 16
-EE_DEFAULT = 4
+EE_DEFAULT = 4  # JT org SRE / default de projeto
+EE_ROQUE_CLOUD = 13  # ee-demo-lab-roque — JT AWS-UPDATE-AAP-CREDENTIALS na org ROQUE
 GIT_URL = "https://github.com/allanroque/roque-lab-demo.git"
 GIT_BRANCH = "main"
 
@@ -216,6 +217,7 @@ def upsert_jt(
     inventory_id: int,
     cred_id: int,
     label_ids: list[int],
+    ee_id: int,
 ) -> int:
     body = {
         "name": JT_NAME,
@@ -225,7 +227,7 @@ def upsert_jt(
         "project": project_id,
         "playbook": PLAYBOOK,
         "verbosity": 1,
-        "execution_environment": EE_DEFAULT,
+        "execution_environment": ee_id,
         "become_enabled": False,
         "diff_mode": False,
         "survey_enabled": True,
@@ -277,8 +279,16 @@ def main():
     lbl_cloud_r = ensure_label(ORG_ROQUE, "cloud")
 
     print("=== Job Templates ===")
-    jt_sre = upsert_jt(proj_sre, 21, cred_sre, [lbl_aws_sre, lbl_cfg_sre, lbl_cloud_sre])
-    jt_roque = upsert_jt(proj_roque, 26, cred_roque, [lbl_aws_r, lbl_cfg_r, lbl_cloud_r])
+    jt_sre = upsert_jt(
+        proj_sre, 21, cred_sre, [lbl_aws_sre, lbl_cfg_sre, lbl_cloud_sre], EE_DEFAULT
+    )
+    jt_roque = upsert_jt(
+        proj_roque,
+        26,
+        cred_roque,
+        [lbl_aws_r, lbl_cfg_r, lbl_cloud_r],
+        EE_ROQUE_CLOUD,
+    )
 
     print("=== OK ===")
     print(f"  SRE:  JT id={jt_sre}  CRED-AAP-SRE id={cred_sre}  projeto id={proj_sre}  inv=INV-SRE-LAB (21)")
