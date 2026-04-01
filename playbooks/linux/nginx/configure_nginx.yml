@@ -1,0 +1,129 @@
+---
+# Playbook: Configurar Nginx no RHEL
+# Descricao: Instala e configura Nginx com porta customizavel e pagina de teste
+#
+# Variaveis Survey AAP:
+#   - nginx_port: Porta de escuta do Nginx (default: 80)
+- name: Configurar Nginx no RHEL
+  hosts: all
+  gather_facts: true
+  become: true
+
+  vars:
+    nginx_port: 80
+    nginx_doc_root: /usr/share/nginx/html
+
+  tasks:
+    # ── Pre-requisitos ───────────────────────────────────────────────────────
+    - name: Parar e desabilitar Apache se estiver ativo (conflito porta 80)
+      ansible.builtin.systemd:
+        name: httpd
+        state: stopped
+        enabled: false
+      failed_when: false
+      tags:
+        - nginx
+        - pre
+
+    # ── Instalacao ───────────────────────────────────────────────────────────
+    - name: Instalar Nginx
+      ansible.builtin.dnf:
+        name: nginx
+        state: present
+      tags:
+        - nginx
+        - install
+
+    # ── Configuracao ─────────────────────────────────────────────────────────
+    - name: Configurar Nginx (nginx.conf)
+      ansible.builtin.template:
+        src: nginx.conf.j2
+        dest: /etc/nginx/nginx.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reiniciar Nginx
+      tags:
+        - nginx
+        - config
+
+    - name: Deploy da pagina de teste (index.html)
+      ansible.builtin.template:
+        src: nginx_index.html.j2
+        dest: "{{ nginx_doc_root }}/index.html"
+        owner: root
+        group: root
+        mode: "0644"
+      tags:
+        - nginx
+        - config
+
+    # ── SELinux ──────────────────────────────────────────────────────────────
+    - name: Permitir Nginx em porta customizada (SELinux)
+      community.general.seport:
+        ports: "{{ nginx_port }}"
+        proto: tcp
+        setype: http_port_t
+        state: present
+      when: nginx_port | int != 80
+      tags:
+        - nginx
+        - selinux
+
+    # ── Firewalld ────────────────────────────────────────────────────────────
+    - name: Coletar facts de servicos
+      ansible.builtin.service_facts:
+      tags:
+        - nginx
+        - firewall
+
+    - name: Permitir porta do Nginx no firewalld
+      ansible.posix.firewalld:
+        port: "{{ nginx_port }}/tcp"
+        permanent: true
+        state: enabled
+        immediate: true
+      when:
+        - ansible_facts.services['firewalld.service'] is defined
+        - ansible_facts.services['firewalld.service']['state'] == 'running'
+      tags:
+        - nginx
+        - firewall
+
+    # ── Servico ──────────────────────────────────────────────────────────────
+    - name: Garantir Nginx habilitado e em execucao
+      ansible.builtin.service:
+        name: nginx
+        state: started
+        enabled: true
+      tags:
+        - nginx
+
+    - name: Exibir resumo do Nginx
+      ansible.builtin.debug:
+        msg:
+          - "Nginx instalado e configurado"
+          - "Host       : {{ ansible_hostname }}"
+          - "Port       : {{ nginx_port }}"
+          - "URL        : http://{{ ansible_fqdn | default(inventory_hostname) }}:{{ nginx_port }}"
+      tags:
+        - nginx
+
+  handlers:
+    - name: Reiniciar Nginx
+      ansible.builtin.service:
+        name: nginx
+        state: restarted
+
+  post_tasks:
+    - name: Exportar informacoes do Nginx para workflow (set_stats)
+      ansible.builtin.set_stats:
+        aggregate: false
+        data:
+          stats_nginx_hosts: "{{ ansible_play_hosts }}"
+          stats_nginx_port: "{{ nginx_port }}"
+          stats_nginx_url: "http://{{ ansible_host }}:{{ nginx_port }}"
+          stats_service_status: "running"
+          stats_phase: "nginx_ready"
+      tags:
+        - nginx

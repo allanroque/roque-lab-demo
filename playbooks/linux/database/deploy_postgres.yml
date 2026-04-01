@@ -1,0 +1,161 @@
+---
+# Playbook: Deploy PostgreSQL no RHEL
+# Descricao: Instala, inicializa e configura PostgreSQL com banco e usuario
+#
+# Variaveis Survey AAP:
+#   - postgres_db_name: Nome do banco de dados (default: appdb)
+#   - postgres_db_user: Nome do usuario do banco (default: appuser)
+#   - postgres_db_password: Senha do usuario (campo password, sem default)
+#   - postgres_port: Porta do PostgreSQL (default: 5432)
+- name: Deploy PostgreSQL no RHEL
+  hosts: all
+  gather_facts: true
+  become: true
+
+  vars:
+    postgres_port: 5432
+    postgres_listen_address: "0.0.0.0"
+    postgres_db_name: appdb
+    postgres_db_user: appuser
+    postgres_db_password: ""
+    postgres_data_dir: /var/lib/pgsql/data
+
+  tasks:
+    # ── Instalacao ───────────────────────────────────────────────────────────
+    - name: Instalar pacotes do PostgreSQL
+      ansible.builtin.dnf:
+        name:
+          - postgresql-server
+          - postgresql-contrib
+        state: present
+      tags:
+        - postgres
+        - install
+
+    # ── Inicializacao ────────────────────────────────────────────────────────
+    - name: Inicializar cluster do PostgreSQL
+      ansible.builtin.command:
+        cmd: postgresql-setup --initdb
+        creates: "{{ postgres_data_dir }}/PG_VERSION"
+      tags:
+        - postgres
+        - config
+
+    # ── Configuracao ─────────────────────────────────────────────────────────
+    - name: Configurar listen_addresses
+      ansible.builtin.lineinfile:
+        path: "{{ postgres_data_dir }}/postgresql.conf"
+        regexp: "^#?listen_addresses"
+        line: "listen_addresses = '{{ postgres_listen_address }}'"
+      notify: Reiniciar PostgreSQL
+      tags:
+        - postgres
+        - config
+
+    - name: Configurar porta
+      ansible.builtin.lineinfile:
+        path: "{{ postgres_data_dir }}/postgresql.conf"
+        regexp: "^#?port"
+        line: "port = {{ postgres_port }}"
+      notify: Reiniciar PostgreSQL
+      tags:
+        - postgres
+        - config
+
+    - name: Deploy pg_hba.conf
+      ansible.builtin.template:
+        src: pg_hba.conf.j2
+        dest: "{{ postgres_data_dir }}/pg_hba.conf"
+        owner: postgres
+        group: postgres
+        mode: "0600"
+      notify: Reiniciar PostgreSQL
+      tags:
+        - postgres
+        - config
+
+    # ── Servico ──────────────────────────────────────────────────────────────
+    - name: Garantir PostgreSQL habilitado e em execucao
+      ansible.builtin.service:
+        name: postgresql
+        state: started
+        enabled: true
+      tags:
+        - postgres
+
+    # ── Database e usuario ───────────────────────────────────────────────────
+    - name: Criar banco de dados da aplicacao
+      ansible.builtin.command:
+        cmd: "createdb {{ postgres_db_name }}"
+      become: true
+      become_user: postgres
+      register: _createdb
+      failed_when: _createdb.rc != 0 and 'already exists' not in _createdb.stderr
+      changed_when: _createdb.rc == 0
+      tags:
+        - postgres
+        - database
+
+    - name: Criar usuario da aplicacao
+      ansible.builtin.command:
+        cmd: "createuser --no-superuser --no-createdb --no-createrole {{ postgres_db_user }}"
+      become: true
+      become_user: postgres
+      register: _createuser
+      failed_when: _createuser.rc != 0 and 'already exists' not in _createuser.stderr
+      changed_when: _createuser.rc == 0
+      tags:
+        - postgres
+        - database
+
+    - name: Definir senha do usuario
+      ansible.builtin.command:
+        cmd: "psql -c \"ALTER USER {{ postgres_db_user }} WITH PASSWORD '{{ postgres_db_password }}';\""
+      become: true
+      become_user: postgres
+      changed_when: false
+      no_log: true
+      tags:
+        - postgres
+        - database
+
+    - name: Conceder privilegios no banco de dados
+      ansible.builtin.command:
+        cmd: "psql -c \"GRANT ALL PRIVILEGES ON DATABASE {{ postgres_db_name }} TO {{ postgres_db_user }};\""
+      become: true
+      become_user: postgres
+      changed_when: false
+      tags:
+        - postgres
+        - database
+
+    - name: Exibir resumo do PostgreSQL
+      ansible.builtin.debug:
+        msg:
+          - "PostgreSQL instalado e configurado"
+          - "Host     : {{ ansible_hostname }}"
+          - "Port     : {{ postgres_port }}"
+          - "Database : {{ postgres_db_name }}"
+          - "User     : {{ postgres_db_user }}"
+      tags:
+        - postgres
+
+  handlers:
+    - name: Reiniciar PostgreSQL
+      ansible.builtin.service:
+        name: postgresql
+        state: restarted
+
+  post_tasks:
+    - name: Exportar informacoes do PostgreSQL para workflow (set_stats)
+      ansible.builtin.set_stats:
+        aggregate: false
+        data:
+          stats_postgres_host: "{{ ansible_default_ipv4.address }}"
+          stats_postgres_port: "{{ postgres_port }}"
+          stats_postgres_db: "{{ postgres_db_name }}"
+          stats_postgres_user: "{{ postgres_db_user }}"
+          stats_service_status: "running"
+          stats_phase: "postgres_ready"
+      tags:
+        - postgres

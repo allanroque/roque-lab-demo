@@ -1,0 +1,217 @@
+---
+# Playbook: Provisionar infraestrutura base AWS
+# Baseado em: provisioning-aws-infra.yml + roles/vpc + roles/security_group
+# Descricao: Cria VPC, subnet, Internet Gateway, route table, security group e key pair
+#
+# Variaveis Survey AAP:
+#   - project_name: Nome do projeto (default: ansible-aws-lab)
+#   - aws_region: Regiao AWS (default: us-east-2)
+#   - vpc_cidr: CIDR do VPC (default: 10.10.0.0/16)
+#   - public_subnet_cidr: CIDR da subnet publica (default: 10.10.1.0/24)
+#   - ec2_ssh_public_key: Chave publica SSH para importar no AWS
+- name: Provisionar infraestrutura base AWS
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    project_name: ansible-aws-lab
+    deploy_env: lab
+    aws_region: us-east-2
+    vpc_name: "{{ project_name }}-vpc"
+    vpc_cidr: "10.10.0.0/16"
+    public_subnet_cidr: "10.10.1.0/24"
+    public_subnet_az: "{{ aws_region }}a"
+    public_subnet_name: "{{ project_name }}-public-subnet"
+    igw_name: "{{ project_name }}-igw"
+    route_table_name: "{{ project_name }}-public-rt"
+    sg_name: "{{ project_name }}-sg"
+    sg_description: "Security group for {{ project_name }} lab"
+    ec2_key_name: "{{ project_name }}-key"
+    ec2_ssh_public_key: ""
+    common_tags:
+      Project: "{{ project_name }}"
+      Environment: "{{ deploy_env }}"
+      ManagedBy: ansible
+
+  tasks:
+    # ── VPC ──────────────────────────────────────────────────────────────────
+    - name: Criar VPC
+      amazon.aws.ec2_vpc_net:
+        name: "{{ vpc_name }}"
+        cidr_block: "{{ vpc_cidr }}"
+        region: "{{ aws_region }}"
+        dns_support: true
+        dns_hostnames: true
+        tags: "{{ common_tags | combine({'Name': vpc_name}) }}"
+      register: vpc_result
+      tags:
+        - aws
+        - vpc
+        - provision
+
+    - name: Criar subnet publica
+      amazon.aws.ec2_vpc_subnet:
+        vpc_id: "{{ vpc_result.vpc.id }}"
+        cidr: "{{ public_subnet_cidr }}"
+        az: "{{ public_subnet_az }}"
+        region: "{{ aws_region }}"
+        map_public: true
+        tags: "{{ common_tags | combine({'Name': public_subnet_name}) }}"
+      register: subnet_result
+      tags:
+        - aws
+        - vpc
+        - provision
+
+    - name: Criar Internet Gateway
+      amazon.aws.ec2_vpc_igw:
+        vpc_id: "{{ vpc_result.vpc.id }}"
+        region: "{{ aws_region }}"
+        state: present
+        tags: "{{ common_tags | combine({'Name': igw_name}) }}"
+      register: igw_result
+      tags:
+        - aws
+        - vpc
+        - provision
+
+    - name: Criar route table publica
+      amazon.aws.ec2_vpc_route_table:
+        vpc_id: "{{ vpc_result.vpc.id }}"
+        region: "{{ aws_region }}"
+        subnets:
+          - "{{ subnet_result.subnet.id }}"
+        routes:
+          - dest: "0.0.0.0/0"
+            gateway_id: "{{ igw_result.gateway_id }}"
+        tags: "{{ common_tags | combine({'Name': route_table_name}) }}"
+      register: rt_result
+      tags:
+        - aws
+        - vpc
+        - provision
+
+    - name: Registrar facts da VPC para uso posterior
+      ansible.builtin.set_fact:
+        vpc_id: "{{ vpc_result.vpc.id }}"
+        public_subnet_id: "{{ subnet_result.subnet.id }}"
+        igw_id: "{{ igw_result.gateway_id }}"
+      tags:
+        - aws
+        - vpc
+
+    # ── Security Group ───────────────────────────────────────────────────────
+    - name: Criar security group
+      amazon.aws.ec2_security_group:
+        name: "{{ sg_name }}"
+        description: "{{ sg_description }}"
+        vpc_id: "{{ vpc_id }}"
+        region: "{{ aws_region }}"
+        rules:
+          - proto: tcp
+            ports: [22]
+            cidr_ip: "0.0.0.0/0"
+            rule_desc: "SSH"
+          - proto: tcp
+            ports: [80]
+            cidr_ip: "0.0.0.0/0"
+            rule_desc: "HTTP"
+          - proto: tcp
+            ports: [443]
+            cidr_ip: "0.0.0.0/0"
+            rule_desc: "HTTPS"
+          - proto: tcp
+            ports: [8080]
+            cidr_ip: "0.0.0.0/0"
+            rule_desc: "HTTP-alt"
+          - proto: tcp
+            ports: [8443]
+            cidr_ip: "0.0.0.0/0"
+            rule_desc: "HTTPS-alt"
+          - proto: tcp
+            ports: [3306]
+            cidr_ip: "0.0.0.0/0"
+            rule_desc: "MySQL / MariaDB"
+          - proto: tcp
+            ports: [5432]
+            cidr_ip: "0.0.0.0/0"
+            rule_desc: "PostgreSQL"
+          - proto: tcp
+            ports: [27017]
+            cidr_ip: "0.0.0.0/0"
+            rule_desc: "MongoDB"
+          - proto: tcp
+            ports: [6379]
+            cidr_ip: "0.0.0.0/0"
+            rule_desc: "Redis"
+          - proto: icmp
+            from_port: -1
+            to_port: -1
+            cidr_ip: "0.0.0.0/0"
+            rule_desc: "ICMP ping"
+        rules_egress:
+          - proto: all
+            cidr_ip: "0.0.0.0/0"
+            rule_desc: "Allow all outbound"
+        tags: "{{ common_tags | combine({'Name': sg_name}) }}"
+      register: sg_result
+      tags:
+        - aws
+        - security_group
+        - provision
+
+    - name: Registrar fact do security group
+      ansible.builtin.set_fact:
+        sg_id: "{{ sg_result.group_id }}"
+      tags:
+        - aws
+        - security_group
+
+    # ── SSH Key ──────────────────────────────────────────────────────────────
+    - name: Importar chave publica SSH no AWS
+      amazon.aws.ec2_key:
+        name: "{{ ec2_key_name }}"
+        region: "{{ aws_region }}"
+        key_material: "{{ ec2_ssh_public_key }}"
+        state: present
+        tags: "{{ common_tags | combine({'Name': ec2_key_name}) }}"
+      when: ec2_ssh_public_key | length > 0
+      tags:
+        - aws
+        - key
+        - provision
+
+    # ── Resumo ───────────────────────────────────────────────────────────────
+    - name: Resumo da infraestrutura provisionada
+      ansible.builtin.debug:
+        msg:
+          - "================================================"
+          - " {{ project_name }} — Infrastructure Summary"
+          - "================================================"
+          - "Region       : {{ aws_region }}"
+          - "VPC          : {{ vpc_id }}"
+          - "Subnet       : {{ public_subnet_id }}"
+          - "IGW          : {{ igw_id }}"
+          - "Security GRP : {{ sg_id }}"
+          - "Key Pair     : {{ ec2_key_name }}"
+          - "================================================"
+      tags:
+        - aws
+        - provision
+
+    - name: Exportar IDs da infraestrutura para workflow (set_stats)
+      ansible.builtin.set_stats:
+        aggregate: false
+        data:
+          stats_vpc_id: "{{ vpc_id }}"
+          stats_public_subnet_id: "{{ public_subnet_id }}"
+          stats_igw_id: "{{ igw_id }}"
+          stats_sg_id: "{{ sg_id }}"
+          stats_ec2_key_name: "{{ ec2_key_name }}"
+          stats_aws_region: "{{ aws_region }}"
+          stats_project_name: "{{ project_name }}"
+          stats_phase: "infra_ready"
+      tags:
+        - aws
+        - provision

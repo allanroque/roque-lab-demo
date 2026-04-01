@@ -1,18 +1,22 @@
 ---
-# Playbook: Deploy Apache Web Server
-# Descricao: Instala e configura Apache HTTP Server no RHEL
+# Playbook: Deploy Apache Web Server no RHEL
+# Descricao: Instala e configura Apache httpd com porta customizavel e pagina de teste
+#
 # Variaveis Survey AAP:
-#   - apache_test_message: Mensagem de teste exibida na pagina
+#   - apache_port: Porta de escuta do Apache (default: 80)
+#   - apache_test_message: Mensagem exibida na pagina de teste (default: Apache Test Message)
 - name: Deploy Apache Web Server no RHEL
   hosts: all
   become: true
   gather_facts: true
 
   vars:
+    apache_port: 80
+    apache_doc_root: /var/www/html
     apache_test_message: "Apache Test Message"
-    http_url: "http://{{ ansible_fqdn | default(inventory_hostname) }}"
 
   tasks:
+    # ── Pre-requisitos ───────────────────────────────────────────────────────
     - name: Parar e desabilitar Nginx se estiver ativo (conflito porta 80)
       ansible.builtin.systemd:
         name: nginx
@@ -23,101 +27,109 @@
         - apache
         - pre
 
-    - name: Instalar versao mais recente do Apache
+    # ── Instalacao ───────────────────────────────────────────────────────────
+    - name: Instalar Apache httpd e mod_ssl
       ansible.builtin.dnf:
-        name: httpd
+        name:
+          - httpd
+          - mod_ssl
         state: present
       tags:
         - apache
         - install
 
-    - name: Instalar versao mais recente do firewalld
-      ansible.builtin.dnf:
-        name: firewalld
+    # ── Configuracao ─────────────────────────────────────────────────────────
+    - name: Configurar porta do Apache
+      ansible.builtin.lineinfile:
+        path: /etc/httpd/conf/httpd.conf
+        regexp: "^Listen "
+        line: "Listen {{ apache_port }}"
+      notify: Reiniciar Apache
+      tags:
+        - apache
+        - config
+
+    - name: Definir ServerName
+      ansible.builtin.lineinfile:
+        path: /etc/httpd/conf/httpd.conf
+        regexp: "^#?ServerName "
+        line: "ServerName {{ ansible_fqdn }}:{{ apache_port }}"
+      notify: Reiniciar Apache
+      tags:
+        - apache
+        - config
+
+    - name: Deploy da pagina de teste (index.html)
+      ansible.builtin.template:
+        src: index.html.j2
+        dest: "{{ apache_doc_root }}/index.html"
+        owner: root
+        group: root
+        mode: "0644"
+      tags:
+        - apache
+        - config
+
+    # ── SELinux ──────────────────────────────────────────────────────────────
+    - name: Permitir Apache em porta customizada (SELinux)
+      community.general.seport:
+        ports: "{{ apache_port }}"
+        proto: tcp
+        setype: http_port_t
         state: present
+      when: apache_port | int != 80
+      tags:
+        - apache
+        - selinux
+
+    # ── Firewalld ────────────────────────────────────────────────────────────
+    - name: Coletar facts de servicos
+      ansible.builtin.service_facts:
       tags:
         - apache
         - firewall
 
-    - name: Garantir firewalld habilitado e em execucao
-      ansible.builtin.service:
-        name: firewalld
-        enabled: true
-        state: started
-      tags:
-        - apache
-        - firewall
-
-    - name: Permitir servico HTTP no firewalld
+    - name: Permitir porta do Apache no firewalld
       ansible.posix.firewalld:
-        service: http
+        port: "{{ apache_port }}/tcp"
         permanent: true
         state: enabled
         immediate: true
+      when:
+        - ansible_facts.services['firewalld.service'] is defined
+        - ansible_facts.services['firewalld.service']['state'] == 'running'
       tags:
         - apache
         - firewall
 
-    - name: Copiar configuracao do Apache (httpd.conf)
-      ansible.builtin.copy:
-        src: httpd.conf
-        dest: /etc/httpd/conf/httpd.conf
-        owner: root
-        group: root
-        mode: "0644"
-      notify: Reiniciar Apache
-      tags:
-        - apache
-        - config
-
-    - name: Fazer deploy do index.html via template
-      ansible.builtin.template:
-        src: index.html.j2
-        dest: /var/www/html/index.html
-        owner: root
-        group: root
-        mode: "0644"
-      notify: Reiniciar Apache
-      tags:
-        - apache
-        - config
-
+    # ── Servico ──────────────────────────────────────────────────────────────
     - name: Garantir Apache habilitado e em execucao
       ansible.builtin.service:
         name: httpd
-        enabled: true
         state: started
+        enabled: true
       tags:
         - apache
 
+    # ── Validacao ─────────────────────────────────────────────────────────────
     - name: Validar pagina web com teste HTTP
       ansible.builtin.uri:
-        url: "{{ http_url }}"
+        url: "http://{{ ansible_fqdn | default(inventory_hostname) }}:{{ apache_port }}"
         return_content: false
         status_code: 200
-      register: result
+      register: http_result
       tags:
         - apache
         - validate
 
-    - name: Exibir resultado do teste HTTP
+    - name: Exibir resumo do Apache
       ansible.builtin.debug:
-        msg: "O retorno do link foi {{ result.status }}"
-      tags:
-        - apache
-        - validate
-
-    - name: Falhar se retorno HTTP nao for 200
-      ansible.builtin.fail:
-        msg: "HTTP return code is not 200"
-      when: result.status != 200
-      tags:
-        - apache
-        - validate
-
-    - name: Exibir URL de acesso a pagina
-      ansible.builtin.debug:
-        msg: "{{ http_url }}"
+        msg:
+          - "Apache instalado e configurado"
+          - "Host       : {{ ansible_hostname }}"
+          - "Port       : {{ apache_port }}"
+          - "HTTP test  : {{ http_result.status }}"
+          - "URL        : http://{{ ansible_fqdn | default(inventory_hostname) }}:{{ apache_port }}"
       tags:
         - apache
         - validate
@@ -127,3 +139,16 @@
       ansible.builtin.service:
         name: httpd
         state: restarted
+
+  post_tasks:
+    - name: Exportar informacoes do Apache para workflow (set_stats)
+      ansible.builtin.set_stats:
+        aggregate: false
+        data:
+          stats_apache_hosts: "{{ ansible_play_hosts }}"
+          stats_apache_port: "{{ apache_port }}"
+          stats_apache_url: "http://{{ ansible_host }}:{{ apache_port }}"
+          stats_service_status: "running"
+          stats_phase: "apache_ready"
+      tags:
+        - apache

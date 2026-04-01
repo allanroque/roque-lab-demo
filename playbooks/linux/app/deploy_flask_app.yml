@@ -1,0 +1,169 @@
+---
+# Playbook: Deploy de aplicacao Flask no RHEL
+# Descricao: Cria usuario, instala Python/Flask e configura servico systemd
+#
+# Variaveis Survey AAP:
+#   - app_name: Nome do servico/aplicacao (default: myapp)
+#   - app_port: Porta da aplicacao (default: 8080)
+#   - app_env: Ambiente (default: production)
+- name: Deploy de aplicacao Flask no RHEL
+  hosts: all
+  gather_facts: true
+  become: true
+
+  vars:
+    app_name: myapp
+    app_user: appuser
+    app_port: 8080
+    app_deploy_dir: /opt/app
+    app_env: production
+    app_version: "1.0.0"
+
+  tasks:
+    # ── Usuario e diretorios ─────────────────────────────────────────────────
+    - name: Criar usuario da aplicacao
+      ansible.builtin.user:
+        name: "{{ app_user }}"
+        system: true
+        shell: /sbin/nologin
+        create_home: false
+      tags:
+        - app
+        - config
+
+    - name: Criar diretorio da aplicacao
+      ansible.builtin.file:
+        path: "{{ app_deploy_dir }}"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0755"
+      tags:
+        - app
+        - config
+
+    # ── Dependencias ─────────────────────────────────────────────────────────
+    - name: Instalar Python e pip
+      ansible.builtin.dnf:
+        name:
+          - python3
+          - python3-pip
+        state: present
+      tags:
+        - app
+        - install
+
+    # ── Deploy da aplicacao ──────────────────────────────────────────────────
+    - name: Deploy do app.py
+      ansible.builtin.template:
+        src: app.py.j2
+        dest: "{{ app_deploy_dir }}/app.py"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0644"
+      notify: Reiniciar aplicacao
+      tags:
+        - app
+        - deploy
+
+    - name: Deploy do requirements.txt
+      ansible.builtin.template:
+        src: requirements.txt.j2
+        dest: "{{ app_deploy_dir }}/requirements.txt"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0644"
+      tags:
+        - app
+        - deploy
+
+    - name: Instalar dependencias Python
+      ansible.builtin.pip:
+        requirements: "{{ app_deploy_dir }}/requirements.txt"
+        state: present
+      tags:
+        - app
+        - deploy
+
+    # ── Servico systemd ──────────────────────────────────────────────────────
+    - name: Deploy do servico systemd
+      ansible.builtin.template:
+        src: app.service.j2
+        dest: "/etc/systemd/system/{{ app_name }}.service"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reiniciar aplicacao
+      tags:
+        - app
+        - deploy
+
+    - name: Recarregar daemon systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+      tags:
+        - app
+
+    - name: Garantir servico da aplicacao habilitado e em execucao
+      ansible.builtin.service:
+        name: "{{ app_name }}"
+        state: started
+        enabled: true
+      tags:
+        - app
+
+    # ── Firewall ─────────────────────────────────────────────────────────────
+    - name: Coletar facts de servicos
+      ansible.builtin.service_facts:
+      tags:
+        - app
+        - firewall
+
+    - name: Permitir porta da aplicacao no firewalld
+      ansible.posix.firewalld:
+        port: "{{ app_port }}/tcp"
+        permanent: true
+        state: enabled
+        immediate: true
+      when:
+        - ansible_facts.services['firewalld.service'] is defined
+        - ansible_facts.services['firewalld.service']['state'] == 'running'
+      tags:
+        - app
+        - firewall
+
+    # ── Resumo ───────────────────────────────────────────────────────────────
+    - name: Exibir resumo da aplicacao
+      ansible.builtin.debug:
+        msg:
+          - "Aplicacao implantada"
+          - "Name    : {{ app_name }}"
+          - "Version : {{ app_version }}"
+          - "Host    : {{ ansible_hostname }}"
+          - "Port    : {{ app_port }}"
+          - "Dir     : {{ app_deploy_dir }}"
+          - "URL     : http://{{ ansible_fqdn | default(inventory_hostname) }}:{{ app_port }}"
+          - "Health  : http://{{ ansible_fqdn | default(inventory_hostname) }}:{{ app_port }}/health"
+      tags:
+        - app
+
+  handlers:
+    - name: Reiniciar aplicacao
+      ansible.builtin.service:
+        name: "{{ app_name }}"
+        state: restarted
+
+  post_tasks:
+    - name: Exportar informacoes da aplicacao para workflow (set_stats)
+      ansible.builtin.set_stats:
+        aggregate: false
+        data:
+          stats_app_name: "{{ app_name }}"
+          stats_app_hosts: "{{ ansible_play_hosts }}"
+          stats_app_port: "{{ app_port }}"
+          stats_app_url: "http://{{ ansible_default_ipv4.address }}:{{ app_port }}"
+          stats_app_version: "{{ app_version }}"
+          stats_service_status: "running"
+          stats_phase: "app_ready"
+      tags:
+        - app

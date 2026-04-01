@@ -1,0 +1,348 @@
+---
+# Playbook: Provisionar instancias EC2 RHEL na AWS
+# Baseado em: provisioning-aws-ec2.yml + roles/ec2
+# Descricao: Localiza VPC/SG existentes e lanca instancias EC2 RHEL
+#
+# Variaveis Survey AAP:
+#   - ec2_server_name: Nome base das instancias (default: server)
+#   - ec2_instance_size: Tipo da instancia (t2.micro | t2.small | t2.medium)
+#   - ec2_quantity: Quantidade de instancias (default: 1)
+#   - ec2_server_role: Tag Role (default: webserver)
+#   - ec2_server_group: Tag Group (default: lab)
+#   - aws_region: Regiao AWS (default: us-east-2)
+- name: Localizar VPC e security group existentes
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    project_name: ansible-aws-lab
+    deploy_env: lab
+    aws_region: us-east-2
+    vpc_name: "{{ project_name }}-vpc"
+    public_subnet_name: "{{ project_name }}-public-subnet"
+    sg_name: "{{ project_name }}-sg"
+    ec2_key_name: "{{ project_name }}-key"
+    ec2_server_name: server
+    ec2_instance_size: t2.micro
+    ec2_server_role: webserver
+    ec2_server_group: lab
+    ec2_quantity: 1
+    ec2_rhel_owner: "309956199498"
+    ec2_rhel_version: "RHEL-9*GA*"
+    common_tags:
+      Project: "{{ project_name }}"
+      Environment: "{{ deploy_env }}"
+      ManagedBy: ansible
+
+  tasks:
+    - name: Validar tipo da instancia
+      ansible.builtin.assert:
+        that: ec2_instance_size in ['t2.micro', 't2.small', 't2.medium']
+        fail_msg: "ec2_instance_size deve ser: t2.micro, t2.small ou t2.medium — valor: '{{ ec2_instance_size }}'"
+      tags:
+        - aws
+        - ec2
+        - validate
+
+    - name: Validar quantidade de instancias
+      ansible.builtin.assert:
+        that: ec2_quantity | int >= 1
+        fail_msg: "ec2_quantity deve ser >= 1"
+      tags:
+        - aws
+        - ec2
+        - validate
+
+    - name: Localizar VPC por tag Name
+      amazon.aws.ec2_vpc_net_info:
+        region: "{{ aws_region }}"
+        filters:
+          "tag:Name": "{{ vpc_name }}"
+      register: vpc_info
+      tags:
+        - aws
+        - ec2
+
+    - name: Validar que VPC existe
+      ansible.builtin.assert:
+        that: vpc_info.vpcs | length > 0
+        fail_msg: >
+          VPC '{{ vpc_name }}' nao encontrada em {{ aws_region }}.
+          Execute provision_infra.yml primeiro.
+      tags:
+        - aws
+        - ec2
+
+    - name: Localizar subnet publica
+      amazon.aws.ec2_vpc_subnet_info:
+        region: "{{ aws_region }}"
+        filters:
+          "tag:Name": "{{ public_subnet_name }}"
+      register: subnet_info
+      tags:
+        - aws
+        - ec2
+
+    - name: Localizar security group
+      amazon.aws.ec2_security_group_info:
+        region: "{{ aws_region }}"
+        filters:
+          group-name: "{{ sg_name }}"
+      register: sg_info
+      tags:
+        - aws
+        - ec2
+
+    - name: Definir IDs da infraestrutura existente
+      ansible.builtin.set_fact:
+        vpc_id: "{{ vpc_info.vpcs[0].vpc_id }}"
+        public_subnet_id: "{{ subnet_info.subnets[0].subnet_id }}"
+        sg_id: "{{ sg_info.security_groups[0].group_id }}"
+      tags:
+        - aws
+        - ec2
+
+    - name: Exibir infraestrutura localizada
+      ansible.builtin.debug:
+        msg:
+          - "VPC    : {{ vpc_id }}"
+          - "Subnet : {{ public_subnet_id }}"
+          - "SG     : {{ sg_id }}"
+          - "Region : {{ aws_region }}"
+          - "Size   : {{ ec2_instance_size }}"
+          - "Name   : {{ ec2_server_name }}1 ... {{ ec2_server_name }}{{ ec2_quantity }}"
+          - "Role   : {{ ec2_server_role }}"
+          - "Group  : {{ ec2_server_group }}"
+      tags:
+        - aws
+        - ec2
+
+- name: Provisionar instancias EC2 RHEL
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    project_name: ansible-aws-lab
+    deploy_env: lab
+    aws_region: us-east-2
+    ec2_key_name: "{{ project_name }}-key"
+    ec2_server_name: server
+    ec2_instance_size: t2.micro
+    ec2_server_role: webserver
+    ec2_server_group: lab
+    ec2_quantity: 1
+    ec2_rhel_owner: "309956199498"
+    ec2_rhel_version: "RHEL-9*GA*"
+    common_tags:
+      Project: "{{ project_name }}"
+      Environment: "{{ deploy_env }}"
+      ManagedBy: ansible
+
+  tasks:
+    # ── AMI ──────────────────────────────────────────────────────────────────
+    - name: Localizar AMI RHEL mais recente
+      amazon.aws.ec2_ami_info:
+        region: "{{ aws_region }}"
+        owners:
+          - "{{ ec2_rhel_owner }}"
+        filters:
+          name: "{{ ec2_rhel_version }}"
+          architecture: x86_64
+          virtualization-type: hvm
+          root-device-type: ebs
+          state: available
+      register: rhel_ami_info
+      tags:
+        - aws
+        - ec2
+
+    - name: Definir AMI ID (mais recente)
+      ansible.builtin.set_fact:
+        ec2_ami_id: "{{ (rhel_ami_info.images | sort(attribute='creation_date') | last).image_id }}"
+      tags:
+        - aws
+        - ec2
+
+    - name: Exibir AMI selecionada
+      ansible.builtin.debug:
+        msg: "AMI: {{ ec2_ami_id }} ({{ (rhel_ami_info.images | sort(attribute='creation_date') | last).name }})"
+      tags:
+        - aws
+        - ec2
+
+    # ── Launch ───────────────────────────────────────────────────────────────
+    - name: "Lancar instancia EC2 {{ ec2_server_name }}{{ item }}"
+      amazon.aws.ec2_instance:
+        name: "{{ ec2_server_name }}{{ item }}"
+        key_name: "{{ ec2_key_name }}"
+        instance_type: "{{ ec2_instance_size }}"
+        image_id: "{{ ec2_ami_id }}"
+        region: "{{ aws_region }}"
+        vpc_subnet_id: "{{ public_subnet_id }}"
+        security_groups:
+          - "{{ sg_id }}"
+        network:
+          assign_public_ip: true
+        state: running
+        wait: true
+        wait_timeout: 300
+        tags: "{{ common_tags | combine({
+          'Name': ec2_server_name ~ item,
+          'Role': ec2_server_role,
+          'Group': ec2_server_group
+          }) }}"
+      loop: "{{ range(1, ec2_quantity | int + 1) | list }}"
+      register: ec2_results
+      tags:
+        - aws
+        - ec2
+
+    # ── Coletar info ─────────────────────────────────────────────────────────
+    - name: Coletar informacoes das instancias
+      ansible.builtin.set_fact:
+        ec2_deployed_hosts: >-
+          {{
+            ec2_deployed_hosts | default([]) + [{
+              'name':        ec2_server_name ~ item.item,
+              'instance_id': item.instances[0].instance_id,
+              'public_ip':   item.instances[0].public_ip_address,
+              'private_ip':  item.instances[0].private_ip_address,
+              'state':       item.instances[0].state.name
+            }]
+          }}
+      loop: "{{ ec2_results.results }}"
+      loop_control:
+        label: "{{ ec2_server_name }}{{ item.item }}"
+      tags:
+        - aws
+        - ec2
+
+    # ── Validar SSH ──────────────────────────────────────────────────────────
+    - name: "Aguardar SSH porta 22 — {{ item.name }} ({{ item.public_ip }})"
+      ansible.builtin.wait_for:
+        host: "{{ item.public_ip }}"
+        port: 22
+        timeout: 180
+        state: started
+      loop: "{{ ec2_deployed_hosts }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - aws
+        - ec2
+
+    # ── Registrar hosts ──────────────────────────────────────────────────────
+    - name: Adicionar instancia ao grupo dinamico ec2_newly_provisioned
+      ansible.builtin.add_host:
+        name: "{{ item.public_ip }}"
+        groups: ec2_newly_provisioned
+        ansible_user: ec2-user
+        ec2_name: "{{ item.name }}"
+        ec2_instance_id: "{{ item.instance_id }}"
+        ec2_public_ip: "{{ item.public_ip }}"
+        ec2_private_ip: "{{ item.private_ip }}"
+      loop: "{{ ec2_deployed_hosts }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - aws
+        - ec2
+
+    - name: Resumo do provisionamento EC2
+      ansible.builtin.debug:
+        msg:
+          - "================================================"
+          - " {{ project_name }} — EC2 Provisioned"
+          - "================================================"
+          - " Region   : {{ aws_region }}"
+          - " AMI      : {{ ec2_ami_id }}"
+          - " Size     : {{ ec2_instance_size }}"
+          - " Key pair : {{ ec2_key_name }}"
+          - " Role     : {{ ec2_server_role }}"
+          - " Group    : {{ ec2_server_group }}"
+          - "================================================"
+      tags:
+        - aws
+        - ec2
+
+# ── Validar acesso SSH e coletar detalhes ─────────────────────────────────────
+- name: Validar acesso SSH e coletar informacoes dos servidores
+  hosts: ec2_newly_provisioned
+  gather_facts: true
+  become: false
+
+  tasks:
+    - name: Relatorio detalhado do servidor
+      ansible.builtin.debug:
+        msg:
+          - "SERVER : {{ ec2_name }}"
+          - "Instance ID   : {{ ec2_instance_id }}"
+          - "Public IP     : {{ ec2_public_ip }}"
+          - "Private IP    : {{ ec2_private_ip }}"
+          - "Hostname      : {{ ansible_hostname }}"
+          - "FQDN          : {{ ansible_fqdn }}"
+          - "OS            : {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "Kernel        : {{ ansible_kernel }}"
+          - "Architecture  : {{ ansible_architecture }}"
+          - "vCPUs         : {{ ansible_processor_vcpus }}"
+          - "RAM Total     : {{ (ansible_memtotal_mb / 1024) | round(1) }} GB"
+          - "SSH user      : {{ ansible_user_id }}"
+          - "Connection    : OK"
+      tags:
+        - aws
+        - ec2
+        - validate
+
+    - name: Agregar informacoes do servidor
+      ansible.builtin.set_fact:
+        server_detail:
+          name: "{{ ec2_name }}"
+          instance_id: "{{ ec2_instance_id }}"
+          public_ip: "{{ ec2_public_ip }}"
+          private_ip: "{{ ec2_private_ip }}"
+          hostname: "{{ ansible_hostname }}"
+          fqdn: "{{ ansible_fqdn }}"
+          os: "{{ ansible_distribution }} {{ ansible_distribution_version }}"
+          kernel: "{{ ansible_kernel }}"
+          vcpus: "{{ ansible_processor_vcpus }}"
+          ram_gb: "{{ (ansible_memtotal_mb / 1024) | round(1) }}"
+          ssh_user: "{{ ansible_user_id }}"
+          ssh_status: "ok"
+      tags:
+        - aws
+        - ec2
+
+- name: Exportar informacoes de deploy para workflow
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    project_name: ansible-aws-lab
+    aws_region: us-east-2
+    ec2_server_name: server
+    ec2_instance_size: t2.micro
+    ec2_quantity: 1
+    ec2_server_role: webserver
+    ec2_server_group: lab
+
+  tasks:
+    - name: Exportar informacoes EC2 para workflow (set_stats)
+      ansible.builtin.set_stats:
+        aggregate: false
+        data:
+          stats_ec2_deployed_hosts: "{{ ec2_deployed_hosts }}"
+          stats_ec2_server_details: "{{ groups['ec2_newly_provisioned'] | map('extract', hostvars, 'server_detail') | list }}"
+          stats_ec2_server_name: "{{ ec2_server_name }}"
+          stats_ec2_instance_size: "{{ ec2_instance_size }}"
+          stats_ec2_quantity: "{{ ec2_quantity | int }}"
+          stats_ec2_server_role: "{{ ec2_server_role }}"
+          stats_ec2_server_group: "{{ ec2_server_group }}"
+          stats_ec2_ami_id: "{{ ec2_ami_id }}"
+          stats_aws_region: "{{ aws_region }}"
+          stats_phase: "compute_ready"
+      tags:
+        - aws
+        - ec2

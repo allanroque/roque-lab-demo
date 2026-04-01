@@ -1,0 +1,50 @@
+import os
+import socket
+import platform
+from datetime import datetime
+from flask import Flask, jsonify
+
+app = Flask(__name__)
+
+APP_NAME    = "{{ app_name }}"
+APP_ENV     = "{{ app_env }}"
+APP_VERSION = "{{ app_version }}"
+HOSTNAME    = socket.gethostname()
+HOST_IP     = "{{ ansible_host }}"
+
+
+@app.route("/")
+def index():
+    return jsonify({
+        "app":         APP_NAME,
+        "version":     APP_VERSION,
+        "environment": APP_ENV,
+        "hostname":    HOSTNAME,
+        "host_ip":     HOST_IP,
+        "python":      platform.python_version(),
+        "timestamp":   datetime.utcnow().isoformat() + "Z",
+        "message":     "Ansible AWS Lab - App running!",
+    })
+
+
+@app.route("/health")
+def health():
+    return jsonify({"status": "ok", "app": APP_NAME}), 200
+
+
+@app.route("/info")
+def info():
+    return jsonify({
+        "app":      APP_NAME,
+        "env":      APP_ENV,
+        "version":  APP_VERSION,
+        "hostname": HOSTNAME,
+        "ip":       HOST_IP,
+        "pid":      os.getpid(),
+        "uptime":   str(datetime.utcnow()),
+    })
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("APP_PORT", {{ app_port }}))
+    app.run(host="0.0.0.0", port=port)
