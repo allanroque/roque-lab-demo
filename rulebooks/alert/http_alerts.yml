@@ -1,0 +1,12 @@
+groups:
+- name: http_alerts
+  rules:
+  - alert: HTTPServiceDown
+    expr: probe_success{job="http"} == 0
+    for: 1m
+    labels:
+      severity: critical
+    annotations:
+      summary: "HTTP service down on port 80"
+      description: "HTTP service on port 80 is down for {{ $labels.instance }}. Please investigate the issue."
+

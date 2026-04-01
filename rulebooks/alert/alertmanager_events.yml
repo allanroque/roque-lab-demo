@@ -1,0 +1,82 @@
+---
+# =========================================================
+# Rulebook para capturar e tratar alertas do Alertmanager
+# =========================================================
+
+- name: Capture alertmanager alerts
+  hosts: localhost
+
+  # -------------------------
+  # Fonte de eventos: Alertmanager
+  # -------------------------
+  sources:
+    - ansible.eda.alertmanager:
+        host: 0.0.0.0                 # EDA escutará em todas as interfaces
+        port: 5050                    # Porta onde o Alertmanager enviará os alertas
+        data_alerts_path: alerts     # Caminho dentro do payload JSON onde estão os alertas
+        data_host_path: labels.instance  # Caminho para o host alvo do alerta
+        data_path_separator: .       # Separador usado para navegar nas chaves
+        skip_original_data: true     # Ignora o payload bruto no evento tratado
+
+  # -------------------------
+  # Regras para tratamento dos alertas recebidos
+  # -------------------------
+  rules:
+
+    # -------------------------------------------
+    # Alerta: SELinux foi desabilitado (status: firing)
+    # Aciona um job de baseline
+    # -------------------------------------------
+    - name: SELinux Disabled - Firing
+      condition: event.alert.labels.alertname == "SELinuxDisabled" and event.alert.status == "firing"
+      action:
+        run_job_template:
+          name: "LINUX-CONFIG-SELINUX"
+          organization: "SRE"
+          job_args:
+            limit: "{{ event.meta.hosts }}"   # Aplica apenas ao host do alerta
+          extra_vars:
+            alerta: "{{ event.alert.labels.alertname }}"
+            hostname: "{{ event.alert.labels.instance }}"
+
+    # -------------------------------------------
+    # Alerta: SELinux foi reabilitado (status: resolved)
+    # Apenas faz log (debug)
+    # -------------------------------------------
+    - name: SELinux Disabled - Resolved
+      condition: event.alert.labels.alertname == "SELinuxDisabled" and event.alert.status == "resolved"
+      action:
+        debug:
+          msg: "SELinux re-enabled or alert resolved on: {{ event.meta.hosts }}"
+
+    # -------------------------------------------
+    # Alerta: Espaço em disco crítico (status: firing)
+    # Aciona automação para liberar espaço
+    # -------------------------------------------
+    - name: High Filesystem Usage - Firing
+      condition: event.alert.labels.alertname == "HighFilesystemUsage" and event.alert.status == "firing"
+      action:
+        run_workflow_template:
+          name: "WF-SH-DISK-SPACE"
+          organization: "SRE"
+          job_args:
+            limit: "{{ event.meta.hosts }}"
+
+    # -------------------------------------------
+    # Alerta de disco resolvido (status: resolved)
+    # Apenas registra resolução
+    # -------------------------------------------
+    - name: High Filesystem Usage - Resolved
+      condition: event.alert.labels.alertname == "HighFilesystemUsage" and event.alert.status == "resolved"
+      action:
+        debug:
+          msg: "Disk space alert resolved on: {{ event.meta.hosts }}"
+
+    # -------------------------------------------
+    # Captura genérica: outros alertas que não bateram nas regras acima
+    # Apenas registra os eventos
+    # -------------------------------------------
+    - name: Capture all other events from this source
+      condition: event.alert is defined
+      action:
+        debug:

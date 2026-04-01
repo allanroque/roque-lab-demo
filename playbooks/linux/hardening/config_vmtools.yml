@@ -1,0 +1,46 @@
+---
+# Playbook: Instalar e configurar open-vm-tools
+# Descricao: Instala open-vm-tools e habilita vmtoolsd em hosts VMware
+#
+# Variaveis Survey AAP: nenhuma
+- name: Instalar e configurar open-vm-tools em hosts VMware
+  hosts: all
+  ignore_unreachable: true
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Verificar se o host e uma VM VMware
+      ansible.builtin.assert:
+        that: ansible_virtualization_type == "VMware"
+        fail_msg: "Host {{ inventory_hostname }} nao e VMware (tipo: {{ ansible_virtualization_type | default('desconhecido') }}). Ignorando."
+        success_msg: "Host {{ inventory_hostname }} e VMware. Prosseguindo com instalacao."
+      tags:
+        - linux
+        - vmtools
+        - validate
+
+    - name: Instalar open-vm-tools
+      ansible.builtin.dnf:
+        name: open-vm-tools
+        state: present
+      tags:
+        - linux
+        - vmtools
+        - install
+
+    - name: Habilitar e iniciar vmtoolsd
+      ansible.builtin.systemd:
+        name: vmtoolsd
+        state: started
+        enabled: true
+      tags:
+        - linux
+        - vmtools
+
+    - name: Exibir status do vmtoolsd
+      ansible.builtin.debug:
+        msg: "open-vm-tools instalado e vmtoolsd ativo em {{ inventory_hostname }}"
+      tags:
+        - linux
+        - vmtools

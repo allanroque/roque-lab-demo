@@ -1,0 +1,11 @@
+groups:
+- name: memory_alerts
+  rules:
+  - alert: HighMemoryUsage
+    expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes * 100 > 80
+    for: 1m
+    labels:
+      severity: critical
+    annotations:
+      summary: High Memory Usage Detected
+      description: 'Server {{ $labels.instance }} is using more than 80% of its total memory for over 5 minutes.'

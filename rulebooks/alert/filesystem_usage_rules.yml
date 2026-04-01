@@ -1,0 +1,11 @@
+groups:
+- name: filesystem_alerts
+  rules:
+  - alert: HighFilesystemUsage
+    expr: (1 - node_filesystem_free_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 > 80
+    for: 1m
+    labels:
+      severity: critical
+    annotations:
+      summary: "High filesystem usage on /"
+      description: "Filesystem usage on / is above 80%. Current usage is {{ $value }}%. Please investigate and take necessary actions."
