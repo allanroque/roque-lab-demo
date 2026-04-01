@@ -40,6 +40,7 @@
     # vmrest_* injetados pelo credential type VMware Fusion REST API (id: 36)
     # NAO definir defaults aqui — os valores vem da credencial CRED-VMWARE-ROQUE
     vmrest_base_url: "http://{{ vmrest_host }}:{{ vmrest_port }}/api"
+    vmrest_content_type: "application/vnd.vmware.vmw.rest-v1+json"
 
   tasks:
     # ── Validacao ────────────────────────────────────────────────────────────
@@ -102,6 +103,8 @@
         url_username: "{{ vmrest_user }}"
         url_password: "{{ vmrest_password }}"
         force_basic_auth: true
+        headers:
+          Content-Type: "{{ vmrest_content_type }}"
         body_format: json
         body:
           name: "{{ host_fqdn }}"
@@ -140,6 +143,8 @@
         url_username: "{{ vmrest_user }}"
         url_password: "{{ vmrest_password }}"
         force_basic_auth: true
+        headers:
+          Content-Type: "{{ vmrest_content_type }}"
         body_format: json
         body:
           processors: "{{ host_cpus | int }}"
@@ -175,6 +180,8 @@
         url_username: "{{ vmrest_user }}"
         url_password: "{{ vmrest_password }}"
         force_basic_auth: true
+        headers:
+          Content-Type: "{{ vmrest_content_type }}"
         body_format: form-urlencoded
         body: "on"
         status_code:
