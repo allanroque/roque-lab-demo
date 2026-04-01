@@ -11,14 +11,9 @@
 #   host_role        - Role/funcao do servidor (webserver | database | app | bastion)
 #   host_group       - Grupo do servidor (lab | prod | staging)
 #   host_env         - Ambiente (lab | dev | staging | production)
-#   host_cpu         - Metadado vCPU (futuro; survey AAP)
-#   host_memory      - Metadado RAM (futuro; survey AAP)
-#   host_disk        - Metadado disco (futuro; survey AAP)
-#   vm_cpus          - Numero de vCPUs (default: 2) — aplicado no vmrest
-#   vm_memory        - Reservado (futuro)
-#   vm_memory_mb     - Memoria RAM em MB (default: 2048) — aplicado no vmrest
-#   vmrest_host      - IP do host VMware Fusion (default: 192.168.100.1)
-#   vmrest_port      - Porta do vmrest (default: 8698)
+#   host_cpus        - Numero de vCPUs (default: 2)
+#   host_memory_mb   - Memoria RAM em MB (default: 2048)
+#   host_disk        - Disco (informativo para CMDB, ex: 40GB)
 #   vmrest_user      - Usuario vmrest  # Configurado no AAP Controller
 #   vmrest_password  - Senha vmrest    # Configurado no AAP Controller
 # =============================================================================
@@ -34,12 +29,9 @@
     host_role: "webserver"
     host_group: "lab"
     host_env: "lab"
-    host_cpu: 0
-    host_memory: 0
+    host_cpus: 2
+    host_memory_mb: 2048
     host_disk: ""
-    vm_cpus: 2
-    vm_memory: 0
-    vm_memory_mb: 2048
     vm_template_id: "FOVC332SCFEC425PKT21OGQM5UEETP0A"
     vmrest_host: "192.168.100.1"
     vmrest_port: 8698
@@ -139,7 +131,7 @@
         - vmware
 
     # ── Configurar recursos da VM ────────────────────────────────────────────
-    - name: Configurar vCPUs ({{ vm_cpus }}) e memoria ({{ vm_memory_mb }} MB)
+    - name: Configurar vCPUs ({{ host_cpus }}) e memoria ({{ host_memory_mb }} MB)
       ansible.builtin.uri:
         url: "{{ vmrest_base_url }}/vms/{{ vm_id }}"
         method: PUT
@@ -148,8 +140,8 @@
         force_basic_auth: true
         body_format: json
         body:
-          processors: "{{ vm_cpus | int }}"
-          memory: "{{ vm_memory_mb | int }}"
+          processors: "{{ host_cpus | int }}"
+          memory: "{{ host_memory_mb | int }}"
         status_code:
           - 200
           - 201
@@ -206,6 +198,34 @@
         - vmware
         - validate
 
+    # ── Coletar detalhes confirmados da VM ───────────────────────────────────
+    - name: Consultar configuracao final da VM
+      ansible.builtin.uri:
+        url: "{{ vmrest_base_url }}/vms/{{ vm_id }}"
+        method: GET
+        url_username: "{{ vmrest_user }}"
+        url_password: "{{ vmrest_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: vm_details
+      tags:
+        - provisioning
+        - vmware
+
+    - name: Obter path da VM provisionada
+      ansible.builtin.set_fact:
+        vm_path: "{{ (vm_list.json | selectattr('id', 'equalto', vm_id) | list | first).path | default('') }}"
+      tags:
+        - provisioning
+        - vmware
+
+    - name: Registrar timestamp do provisionamento
+      ansible.builtin.set_fact:
+        provisioned_at: "{{ lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') }}"
+      tags:
+        - provisioning
+        - vmware
+
     # ── Resumo ───────────────────────────────────────────────────────────────
     - name: Exibir resumo do provisionamento
       ansible.builtin.debug:
@@ -213,38 +233,66 @@
           - "================================================"
           - " VM Provisionada com Sucesso"
           - "================================================"
-          - "Host     : {{ host_fqdn }}"
-          - "IP       : {{ host_ip }}"
-          - "Role     : {{ host_role }}"
-          - "Group    : {{ host_group }}"
-          - "Env      : {{ host_env }}"
-          - "vCPUs    : {{ vm_cpus }}"
-          - "RAM      : {{ vm_memory_mb }} MB"
-          - "VM ID    : {{ vm_id }}"
-          - "SSH      : OK"
+          - " Servidor"
+          - "   FQDN        : {{ host_fqdn }}"
+          - "   IP           : {{ host_ip }}"
+          - "   Role         : {{ host_role }}"
+          - "   Group        : {{ host_group }}"
+          - "   Environment  : {{ host_env }}"
+          - "   Descricao    : {{ host_description }}"
+          - "------------------------------------------------"
+          - " Recursos"
+          - "   vCPUs        : {{ vm_details.json.cpu.processors | default(host_cpus) }}"
+          - "   RAM          : {{ vm_details.json.memory | default(host_memory_mb) }} MB"
+          - "   Disk         : {{ host_disk | default('N/A') }}"
+          - "------------------------------------------------"
+          - " VM"
+          - "   ID           : {{ vm_id }}"
+          - "   Path         : {{ vm_path }}"
+          - "   Platform     : vmware_fusion"
+          - "   Hypervisor   : {{ vmrest_host }}"
+          - "   Provisioned  : {{ provisioned_at }}"
+          - "   SSH          : OK"
           - "================================================"
       tags:
         - provisioning
         - vmware
 
-    # ── Exportar variaveis para proximo job no workflow ──────────────────────
-    - name: Exportar dados da VM para proximo job template
+    # ── Exportar para workflow (IPAM, DNS, Inventario, ServiceNow) ───────────
+    - name: Exportar dados para proximo job template
       ansible.builtin.set_stats:
         data:
-          host_ip: "{{ host_ip }}"
           host_name: "{{ host_name }}"
           host_fqdn: "{{ host_fqdn }}"
+          host_domain: "{{ host_domain }}"
+          host_ip: "{{ host_ip }}"
           host_description: "{{ host_description }}"
           host_role: "{{ host_role }}"
           host_group: "{{ host_group }}"
           host_env: "{{ host_env }}"
-          vm_id: "{{ vm_id }}"
-          vm_cpus: "{{ vm_cpus }}"
-          vm_memory: "{{ vm_memory }}"
-          vm_memory_mb: "{{ vm_memory_mb }}"
-          host_cpu: "{{ host_cpu }}"
-          host_memory: "{{ host_memory }}"
+          host_cpus: "{{ vm_details.json.cpu.processors | default(host_cpus) }}"
+          host_memory_mb: "{{ vm_details.json.memory | default(host_memory_mb) }}"
           host_disk: "{{ host_disk }}"
+          vm_id: "{{ vm_id }}"
+          vm_path: "{{ vm_path }}"
+          vm_platform: "vmware_fusion"
+          vm_hypervisor: "{{ vmrest_host }}"
+          provisioned_by: "ansible"
+          provisioned_at: "{{ provisioned_at }}"
+          sn_short_description: >-
+            Provisioned VM {{ host_fqdn }} ({{ host_ip }})
+          sn_description: >-
+            Server: {{ host_fqdn }}
+            | IP: {{ host_ip }}
+            | Role: {{ host_role }}
+            | Group: {{ host_group }}
+            | Environment: {{ host_env }}
+            | vCPUs: {{ vm_details.json.cpu.processors | default(host_cpus) }}
+            | RAM: {{ vm_details.json.memory | default(host_memory_mb) }} MB
+            | Disk: {{ host_disk | default('N/A') }}
+            | Platform: vmware_fusion
+            | Hypervisor: {{ vmrest_host }}
+            | Provisioned at: {{ provisioned_at }}
       tags:
         - provisioning
         - vmware
