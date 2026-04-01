@@ -1,0 +1,115 @@
+---
+# Playbook: Deploy Node.js (serviço HTTP simples + systemd)
+# Repositório: roque-lab-demo (consolidado com PROJ-GIT-ROQUE-LAB)
+#
+# Variáveis Survey AAP:
+#   - app_name: Nome do serviço e diretório (default: myapp)
+#   - app_port: Porta TCP (default: 3000)
+#   - app_env: Rótulo de ambiente (default: production)
+- name: Deploy Node.js backend no RHEL
+  hosts: all
+  gather_facts: true
+  become: true
+
+  vars:
+    app_name: myapp
+    app_port: 3000
+    app_env: production
+    app_user: "node_{{ app_name }}"
+    app_dir: "/opt/{{ app_name }}"
+
+  tasks:
+    - name: Instalar Node.js e npm
+      ansible.builtin.dnf:
+        name:
+          - nodejs
+          - npm
+        state: present
+      tags:
+        - nodejs
+        - install
+
+    - name: Criar utilizador da aplicação
+      ansible.builtin.user:
+        name: "{{ app_user }}"
+        system: true
+        shell: /sbin/nologin
+        home: "{{ app_dir }}"
+        create_home: true
+      tags:
+        - nodejs
+
+    - name: Garantir diretório da aplicação
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: "{{ app_user }}"
+        mode: "0755"
+      tags:
+        - nodejs
+
+    - name: Criar aplicação mínima (HTTP)
+      ansible.builtin.copy:
+        dest: "{{ app_dir }}/app.js"
+        owner: "{{ app_user }}"
+        mode: "0644"
+        content: |
+          const http = require('http');
+          const port = process.env.APP_PORT || 3000;
+          http.createServer((req, res) => {
+            res.writeHead(200, {'Content-Type': 'text/plain'});
+            res.end('Node.js OK — {{ app_name }} (' + process.env.NODE_ENV + ')\\n');
+          }).listen(port, '0.0.0.0', () => console.log('listening on ' + port));
+      notify: Reiniciar serviço Node
+      tags:
+        - nodejs
+        - config
+
+    - name: Instalar dependências (nenhuma obrigatória)
+      ansible.builtin.command:
+        cmd: npm install --omit=dev
+        chdir: "{{ app_dir }}"
+      become: true
+      become_user: "{{ app_user }}"
+      changed_when: false
+      failed_when: false
+      tags:
+        - nodejs
+
+    - name: Unit systemd para Node.js
+      ansible.builtin.copy:
+        dest: "/etc/systemd/system/{{ app_name }}.service"
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Node.js {{ app_name }}
+          After=network.target
+
+          [Service]
+          Type=simple
+          User={{ app_user }}
+          WorkingDirectory={{ app_dir }}
+          Environment=NODE_ENV={{ app_env }}
+          Environment=APP_PORT={{ app_port }}
+          ExecStart=/usr/bin/node {{ app_dir }}/app.js
+          Restart=on-failure
+
+          [Install]
+          WantedBy=multi-user.target
+      notify:
+        - Recarregar systemd
+        - Reiniciar serviço Node
+      tags:
+        - nodejs
+        - systemd
+
+  handlers:
+    - name: Recarregar systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Reiniciar serviço Node
+      ansible.builtin.systemd:
+        name: "{{ app_name }}"
+        state: restarted
+        enabled: true

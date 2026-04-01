@@ -21,37 +21,33 @@ CTX = ssl.create_default_context()
 CTX.check_hostname = False
 CTX.verify_mode = ssl.CERT_NONE
 
-# Mapeamento SRE → nomes ROQUE (playbooks repo ansible-lab-aws-cloud)
-AWS_PROJECT = {
-    "name": "PROJ-GIT-AWS-ROQUE",
-    "description": "AWS / cloud — espelho SRE (ansible-lab-aws-cloud)",
-    "organization": ORG_ID,
-    "scm_type": "git",
-    "scm_url": "https://github.com/allanroque/ansible-lab-aws-cloud.git",
-    "scm_branch": "main",
-    "scm_clean": True,
-    "scm_update_on_launch": True,
-        "default_environment": EE_ROQUE_CLOUD,
-}
+# Playbooks no repositório roque-lab-demo — projeto único PROJ-GIT-ROQUE-LAB
 
-DR_PROJECT = {
-    "name": "PROJ-GIT-DR-ROQUE",
-    "description": "DR — deploy backend Node (espelho ansible-lab-dr)",
-    "organization": ORG_ID,
-    "scm_type": "git",
-    "scm_url": "https://github.com/allanroque/ansible-lab-dr.git",
-    "scm_branch": "main",
-    "scm_clean": True,
-    "scm_update_on_launch": True,
-        "default_environment": EE_ROQUE_CLOUD,
-}
-
-# Surveys copiados dos job templates SRE (270, 272, 271, 274–277)
+# Surveys alinhados aos playbooks em playbooks/aws/ e playbooks/linux/
 SURVEYS = {
     "AWS-PROVISION-INFRA": {
-        "name": "Infra AWS (rede + SG + chave)",
-        "description": "Variáveis para playbooks/provisioning-aws-infra.yml.",
+        "name": "Infra AWS (VPC, SG, chave)",
+        "description": "Variáveis para playbooks/aws/provision_infra.yml.",
         "spec": [
+            {
+                "max": 128,
+                "min": 0,
+                "type": "text",
+                "default": "ansible-aws-lab",
+                "required": False,
+                "variable": "project_name",
+                "question_name": "Nome do projeto (tag AWS)",
+                "question_description": "Prefixo dos recursos (VPC, SG, key pair).",
+            },
+            {
+                "type": "multiplechoice",
+                "choices": "lab\ndev\nhml\nprod",
+                "default": "lab",
+                "required": False,
+                "variable": "deploy_env",
+                "question_name": "Ambiente (tag)",
+                "question_description": "Tag Environment nos recursos.",
+            },
             {
                 "type": "multiplechoice",
                 "choices": "us-east-2\nus-east-1\nus-west-1\nus-west-2\nsa-east-1",
@@ -59,23 +55,43 @@ SURVEYS = {
                 "required": False,
                 "variable": "aws_region",
                 "question_name": "Região AWS",
-                "question_description": "Região AWS onde o ambiente será criado.",
+                "question_description": "",
             },
             {
-                "max": 128,
+                "max": 64,
                 "min": 0,
                 "type": "text",
-                "default": "lab",
+                "default": "10.10.0.0/16",
                 "required": False,
-                "variable": "environment",
-                "question_name": "Ambiente (tag)",
-                "question_description": "Tag de ambiente aplicada em todos os recursos.",
+                "variable": "vpc_cidr",
+                "question_name": "CIDR da VPC",
+                "question_description": "",
+            },
+            {
+                "max": 64,
+                "min": 0,
+                "type": "text",
+                "default": "10.10.1.0/24",
+                "required": False,
+                "variable": "public_subnet_cidr",
+                "question_name": "CIDR da subnet pública",
+                "question_description": "",
+            },
+            {
+                "max": 4096,
+                "min": 0,
+                "type": "text",
+                "default": "",
+                "required": False,
+                "variable": "ec2_ssh_public_key",
+                "question_name": "Chave pública SSH (RSA)",
+                "question_description": "Conteúdo da chave pública para importar no AWS.",
             },
         ],
     },
     "AWS-PROVISION-EC2": {
         "name": "Provisionamento EC2 RHEL",
-        "description": "Variáveis para playbooks/provisioning-aws-ec2.yml (infra já existente).",
+        "description": "Variáveis para playbooks/aws/provision_ec2.yml (infra já existente).",
         "spec": [
             {
                 "max": 128,
@@ -137,7 +153,7 @@ SURVEYS = {
     },
     "AWS-TEARDOWN": {
         "name": "Teardown AWS",
-        "description": "Variáveis para playbooks/teardown-aws.yml. confirm_destroy deve ser yes para executar.",
+        "description": "Variáveis para playbooks/aws/teardown.yml. confirm_destroy deve ser yes.",
         "spec": [
             {
                 "max": 32,
@@ -148,6 +164,16 @@ SURVEYS = {
                 "variable": "confirm_destroy",
                 "question_name": "Confirmar destruição",
                 "question_description": "Digite yes para confirmar. Qualquer outro valor falha o job.",
+            },
+            {
+                "max": 128,
+                "min": 0,
+                "type": "text",
+                "default": "ansible-aws-lab",
+                "required": False,
+                "variable": "project_name",
+                "question_name": "Nome do projeto",
+                "question_description": "Deve coincidir com o usado no provision_infra.",
             },
             {
                 "type": "multiplechoice",
@@ -162,7 +188,7 @@ SURVEYS = {
     },
     "POSTGRES-DEPLOY-LINUX": {
         "name": "Configure PostgreSQL",
-        "description": "Parâmetros do banco (configure-postgres.yml).",
+        "description": "Parâmetros do banco (playbooks/linux/database/deploy_postgres.yml).",
         "spec": [
             {
                 "max": 128,
@@ -206,7 +232,7 @@ SURVEYS = {
     },
     "APACHE-DEPLOY-LINUX": {
         "name": "Configure Apache",
-        "description": "Porta HTTP do Apache (configure-apache.yml).",
+        "description": "Apache httpd (playbooks/linux/apache/deploy_apache_rhel.yml).",
         "spec": [
             {
                 "max": 65535,
@@ -222,7 +248,7 @@ SURVEYS = {
     },
     "DEPLOY-NGINX-LINUX": {
         "name": "Configure Nginx",
-        "description": "Porta HTTP do Nginx (configure-nginx.yml).",
+        "description": "Nginx (playbooks/linux/nginx/configure_nginx.yml).",
         "spec": [
             {
                 "max": 65535,
@@ -238,7 +264,7 @@ SURVEYS = {
     },
     "DEPLOY-APP-LINUX": {
         "name": "DEPLOY-APP-LINUX",
-        "description": "Parâmetros para configure-app.yml (deploy via templates da role app, sem repositório Git).",
+        "description": "Flask (playbooks/linux/app/deploy_flask_app.yml).",
         "spec": [
             {
                 "max": 128,
@@ -268,6 +294,41 @@ SURVEYS = {
                 "variable": "app_env",
                 "question_name": "Environment",
                 "question_description": "Rótulo de ambiente (variável app_env).",
+            },
+        ],
+    },
+    "DEPLOY-NODEJS-LINUX": {
+        "name": "Deploy Node.js",
+        "description": "Node.js (playbooks/linux/nodejs/deploy_nodejs.yml).",
+        "spec": [
+            {
+                "max": 128,
+                "min": 1,
+                "type": "text",
+                "default": "myapp",
+                "required": True,
+                "variable": "app_name",
+                "question_name": "App Name",
+                "question_description": "Nome do serviço systemd e diretório em /opt.",
+            },
+            {
+                "max": 65535,
+                "min": 1,
+                "type": "integer",
+                "default": 3000,
+                "required": False,
+                "variable": "app_port",
+                "question_name": "Port",
+                "question_description": "Porta TCP.",
+            },
+            {
+                "type": "multiplechoice",
+                "choices": "development\nstaging\nproduction",
+                "default": "production",
+                "required": False,
+                "variable": "app_env",
+                "question_name": "Environment",
+                "question_description": "NODE_ENV.",
             },
         ],
     },
@@ -312,11 +373,6 @@ def wait_project_sync(project_id: int, timeout: int = 300):
     raise SystemExit("Timeout aguardando sync do projeto")
 
 
-def find_project(name: str):
-    r = api("GET", f"/projects/?organization={ORG_ID}&search={name}")
-    return r["results"][0]["id"] if r["count"] else None
-
-
 def ensure_label(name: str) -> int:
     r = api("GET", f"/labels/?organization={ORG_ID}&name={name}")
     if r["count"]:
@@ -326,53 +382,21 @@ def ensure_label(name: str) -> int:
     return p["id"]
 
 
-def rename_apache_v1():
-    """Libera o nome APACHE-DEPLOY-LINUX para o playbook AWS (configure-apache.yml)."""
-    r = api("GET", f"/job_templates/?organization={ORG_ID}&name=APACHE-DEPLOY-LINUX")
+def ensure_roque_lab_project() -> int:
+    """Repositório único: github.com/allanroque/roque-lab-demo (main)."""
+    r = api("GET", f"/projects/?organization={ORG_ID}&name=PROJ-GIT-ROQUE-LAB")
     if not r["count"]:
-        print("JT APACHE-DEPLOY-LINUX não encontrado — skip rename.")
-        return
-    jt = r["results"][0]
-    if jt["name"] != "APACHE-DEPLOY-LINUX":
-        return
-    pb = jt.get("playbook") or ""
-    if "deploy_apache_rhel" not in pb:
-        print("APACHE-DEPLOY-LINUX já não é o playbook RHEL — skip rename.")
-        return
-    r2 = api("GET", f"/job_templates/?organization={ORG_ID}&name=APACHE-DEPLOY-LINUX-V1")
-    if r2["count"]:
-        print("APACHE-DEPLOY-LINUX-V1 já existe — ajuste manual se necessário.")
-        return
-    api("PATCH", f"/job_templates/{jt['id']}/", {"name": "APACHE-DEPLOY-LINUX-V1"})
-    print(f"Renomeado JT id={jt['id']} → APACHE-DEPLOY-LINUX-V1 (playbook RHEL).")
-
-
-def ensure_aws_project() -> int:
-    pid = find_project("PROJ-GIT-AWS-ROQUE")
-    if pid:
-        print(f"Projeto PROJ-GIT-AWS-ROQUE id={pid}")
-        return pid
-    p = api("POST", "/projects/", AWS_PROJECT)
-    pid = p["id"]
-    print(f"Criado PROJ-GIT-AWS-ROQUE id={pid}")
+        raise SystemExit(
+            "Projeto PROJ-GIT-ROQUE-LAB não encontrado. Execute .aap_bootstrap_roque.py primeiro."
+        )
+    pid = r["results"][0]["id"]
+    print(f"Projeto PROJ-GIT-ROQUE-LAB id={pid}")
     wait_project_sync(pid)
     return pid
 
 
-def ensure_dr_project() -> int:
-    pid = find_project("PROJ-GIT-DR-ROQUE")
-    if pid:
-        print(f"Projeto PROJ-GIT-DR-ROQUE id={pid}")
-        return pid
-    p = api("POST", "/projects/", DR_PROJECT)
-    pid = p["id"]
-    print(f"Criado PROJ-GIT-DR-ROQUE id={pid}")
-    wait_project_sync(pid)
-    return pid
-
-
-def jt_by_name(project_id: int, name: str):
-    r = api("GET", f"/job_templates/?project={project_id}&name={name}")
+def jt_id_by_org_name(name: str):
+    r = api("GET", f"/job_templates/?organization={ORG_ID}&name={name}")
     return r["results"][0]["id"] if r["count"] else None
 
 
@@ -422,7 +446,7 @@ def upsert_jt(
         "diff_mode": True,
         "survey_enabled": name in SURVEYS,
     }
-    existing = jt_by_name(project_id, name)
+    existing = jt_id_by_org_name(name)
     if existing:
         p = api("PATCH", f"/job_templates/{existing}/", body)
         jtid = existing
@@ -484,25 +508,21 @@ def main():
         print("Defina AAP_ADMIN_TOKEN", file=sys.stderr)
         sys.exit(1)
 
-    print("=== 1) Renomear APACHE RHEL → APACHE-DEPLOY-LINUX-V1 ===")
-    rename_apache_v1()
-
-    print("=== 2) Projetos SCM (inventário: INV-ROQUE-LAB) ===")
-    aws_pid = ensure_aws_project()
-    dr_pid = ensure_dr_project()
+    print("=== 1) Projeto PROJ-GIT-ROQUE-LAB (inventário: INV-ROQUE-LAB) ===")
+    lab_pid = ensure_roque_lab_project()
 
     label_aws = ensure_label("aws")
     label_cloud = ensure_label("cloud")
     label_deploy = ensure_label("deploy")
     label_linux = ensure_label("linux")
 
-    print("=== 3) Job templates (PROJ-GIT-AWS-ROQUE) ===")
+    print("=== 2) Job templates (playbooks no roque-lab-demo) ===")
     jt_ids = {}
 
     jt_ids["AWS-PROVISION-INFRA"] = upsert_jt(
-        aws_pid,
+        lab_pid,
         "AWS-PROVISION-INFRA",
-        "playbooks/provisioning-aws-infra.yml",
+        "playbooks/aws/provision_infra.yml",
         INV_LAB,
         EE_ROQUE_CLOUD,
         False,
@@ -511,9 +531,9 @@ def main():
     )
 
     jt_ids["AWS-PROVISION-EC2"] = upsert_jt(
-        aws_pid,
+        lab_pid,
         "AWS-PROVISION-EC2",
-        "playbooks/provisioning-aws-ec2.yml",
+        "playbooks/aws/provision_ec2.yml",
         INV_LAB,
         EE_ROQUE_CLOUD,
         False,
@@ -522,9 +542,9 @@ def main():
     )
 
     jt_ids["AWS-TEARDOWN"] = upsert_jt(
-        aws_pid,
+        lab_pid,
         "AWS-TEARDOWN",
-        "playbooks/teardown-aws.yml",
+        "playbooks/aws/teardown.yml",
         INV_LAB,
         EE_ROQUE_CLOUD,
         False,
@@ -533,9 +553,9 @@ def main():
     )
 
     jt_ids["POSTGRES-DEPLOY-LINUX"] = upsert_jt(
-        aws_pid,
+        lab_pid,
         "POSTGRES-DEPLOY-LINUX",
-        "playbooks/configure-postgres.yml",
+        "playbooks/linux/database/deploy_postgres.yml",
         INV_LAB,
         EE_ROQUE_CLOUD,
         True,
@@ -544,9 +564,9 @@ def main():
     )
 
     jt_ids["APACHE-DEPLOY-LINUX"] = upsert_jt(
-        aws_pid,
+        lab_pid,
         "APACHE-DEPLOY-LINUX",
-        "playbooks/configure-apache.yml",
+        "playbooks/linux/apache/deploy_apache_rhel.yml",
         INV_LAB,
         EE_ROQUE_CLOUD,
         True,
@@ -555,9 +575,9 @@ def main():
     )
 
     jt_ids["DEPLOY-NGINX-LINUX"] = upsert_jt(
-        aws_pid,
+        lab_pid,
         "DEPLOY-NGINX-LINUX",
-        "playbooks/configure-nginx.yml",
+        "playbooks/linux/nginx/configure_nginx.yml",
         INV_LAB,
         EE_ROQUE_CLOUD,
         True,
@@ -566,9 +586,9 @@ def main():
     )
 
     jt_ids["DEPLOY-APP-LINUX"] = upsert_jt(
-        aws_pid,
+        lab_pid,
         "DEPLOY-APP-LINUX",
-        "playbooks/configure-app.yml",
+        "playbooks/linux/app/deploy_flask_app.yml",
         INV_LAB,
         EE_ROQUE_CLOUD,
         True,
@@ -576,35 +596,18 @@ def main():
         [label_deploy, label_linux],
     )
 
-    print("=== 4) DEPLOY-NODEJS-LINUX (PROJ-GIT-DR-ROQUE) ===")
-    body_node = {
-        "name": "DEPLOY-NODEJS-LINUX",
-        "description": "Espelho SRE NODEJS-DEPLOY-LINUX (deploy-backend.yml)",
-        "job_type": "run",
-        "inventory": INV_LAB,
-        "project": dr_pid,
-        "playbook": "deploy-backend.yml",
-        "verbosity": 1,
-        "execution_environment": EE_ROQUE_CLOUD,
-        "become_enabled": True,
-        "diff_mode": True,
-        "survey_enabled": False,
-    }
-    ex = jt_by_name(dr_pid, "DEPLOY-NODEJS-LINUX")
-    if ex:
-        api("PATCH", f"/job_templates/{ex}/", body_node)
-        nj = ex
-        print(f"  Atualizado DEPLOY-NODEJS-LINUX id={nj}")
-    else:
-        p = api("POST", "/job_templates/", body_node)
-        nj = p["id"]
-        print(f"  Criado DEPLOY-NODEJS-LINUX id={nj}")
-    associate_cred(nj, CRED_SSH_AWS)
-    for lid in (label_deploy, label_linux):
-        associate_label(nj, lid)
-    jt_ids["DEPLOY-NODEJS-LINUX"] = nj
+    jt_ids["DEPLOY-NODEJS-LINUX"] = upsert_jt(
+        lab_pid,
+        "DEPLOY-NODEJS-LINUX",
+        "playbooks/linux/nodejs/deploy_nodejs.yml",
+        INV_LAB,
+        EE_ROQUE_CLOUD,
+        True,
+        [CRED_SSH_AWS],
+        [label_deploy, label_linux],
+    )
 
-    print("=== 5) Workflows ===")
+    print("=== 3) Workflows ===")
     full_chain = [
         "AWS-PROVISION-INFRA",
         "AWS-PROVISION-EC2",
@@ -617,7 +620,7 @@ def main():
     create_workflow("WF-AWS-FULL-DEPLOYMENT", jt_ids, full_chain)
     create_workflow("WF-AWS-TEARDOWN-CLEANUP", jt_ids, ["AWS-TEARDOWN"])
 
-    print("=== 6) Labels cloud nos workflows AWS ===")
+    print("=== 4) Labels cloud nos workflows AWS ===")
     for wf_name in ("WF-AWS-FULL-DEPLOYMENT", "WF-AWS-TEARDOWN-CLEANUP"):
         wfid = wf_exists(wf_name)
         if wfid:
