@@ -5,6 +5,7 @@
 #   tempo_espera:  int    - Wait time in seconds (default: 5)
 - name: Debug simples com wait parametrizado
   hosts: all
+  ignore_unreachable: true
   gather_facts: false
 
   vars:

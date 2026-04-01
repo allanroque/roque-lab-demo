@@ -13,6 +13,7 @@
 # =========================================================================
 - name: Remediacao - Limpeza de disco
   hosts: "{{ target_host | default('all') }}"
+  ignore_unreachable: true
   become: true
   gather_facts: true
   vars:

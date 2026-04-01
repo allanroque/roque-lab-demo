@@ -8,6 +8,7 @@
 #   - app_env: Rótulo de ambiente (default: production)
 - name: Deploy Node.js backend no RHEL
   hosts: all
+  ignore_unreachable: true
   gather_facts: true
   become: true
 

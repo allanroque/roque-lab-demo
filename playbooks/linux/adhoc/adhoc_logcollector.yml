@@ -3,6 +3,7 @@
 # No user variables required - uses gathered facts
 - name: System Information Checklist
   hosts: all
+  ignore_unreachable: true
   gather_facts: true
 
   tasks:

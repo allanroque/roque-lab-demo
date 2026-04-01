@@ -423,6 +423,23 @@ def associate_wf_label(wf_id: int, label_id: int):
         pass
 
 
+def default_limit_for_jt(name: str) -> str:
+    """Grupo do inventário (limit); vazio para API/localhost (AWS, DNS, IPAM)."""
+    if name.startswith("AWS-"):
+        return ""
+    if name.startswith("DNS-") or name.startswith("IPAM-"):
+        return ""
+    if name == "POSTGRES-DEPLOY-LINUX":
+        return "postgresql"
+    if name == "APACHE-DEPLOY-LINUX":
+        return "apache"
+    if name == "DEPLOY-NGINX-LINUX":
+        return "nginx"
+    if name in ("DEPLOY-APP-LINUX", "DEPLOY-NODEJS-LINUX"):
+        return "app"
+    return "infra"
+
+
 def upsert_jt(
     project_id: int,
     name: str,
@@ -445,6 +462,7 @@ def upsert_jt(
         "become_enabled": become,
         "diff_mode": True,
         "survey_enabled": name in SURVEYS,
+        "limit": default_limit_for_jt(name),
     }
     existing = jt_id_by_org_name(name)
     if existing:

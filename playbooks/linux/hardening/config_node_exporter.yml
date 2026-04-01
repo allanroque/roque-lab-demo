@@ -8,6 +8,7 @@
 
 - name: Instalar e iniciar node_exporter em hosts Linux
   hosts: LINUX
+  ignore_unreachable: true
   become: true
   gather_facts: true
 

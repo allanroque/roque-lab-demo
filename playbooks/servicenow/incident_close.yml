@@ -7,10 +7,7 @@
 #   sn_close_code       - Código de fechamento (default: "Solved (Work Around)")
 #   sn_close_notes      - Notas de fechamento (preenchido automaticamente)
 #   ac_job_id           - ID do job no AAP (injetado automaticamente)
-# Credenciais (via AAP Credential):
-#   snow_host            - URL da instância ServiceNow
-#   snow_username        - Usuário ServiceNow
-#   snow_password        - Senha ServiceNow
+# Credenciais: snow_* | SNOW_* (tipo nativo AAP) | SN_* + injector custom
 # =========================================================================
 - name: Fechar incidente no ServiceNow
   hosts: localhost
@@ -23,14 +20,17 @@
       Job ID: {{ ac_job_id | default('0') }}.
       As a result, the ticket will now be marked as closed.
     sn_incident_number: "{{ sn_incident_number }}"
+    _sn_url: "{{ snow_host | default(SNOW_INSTANCE | default(SN_HOST | default(''))) }}"
+    _sn_user: "{{ snow_username | default(SNOW_USERNAME | default(SN_USERNAME | default(''))) }}"
+    _sn_pass: "{{ snow_password | default(SNOW_PASSWORD | default(SN_PASSWORD | default(''))) }}"
 
   tasks:
     - name: Fechar incidente {{ sn_incident_number }}
       servicenow.itsm.incident:
         instance:
-          host: "{{ snow_host }}"
-          username: "{{ snow_username }}"
-          password: "{{ snow_password }}"
+          host: "{{ _sn_url }}"
+          username: "{{ _sn_user }}"
+          password: "{{ _sn_pass }}"
         state: closed
         close_code: "{{ sn_close_code }}"
         close_notes: "{{ sn_close_notes }}"

@@ -5,6 +5,7 @@
 #   target_interface:  string      - Network interface to configure (default: primary interface)
 - name: Configurar DNS em interfaces gerenciadas pelo NetworkManager (RHEL 9)
   hosts: all
+  ignore_unreachable: true
   become: true
   gather_facts: true
 

@@ -5,6 +5,7 @@
 #   pkgs_to_remove:  list - Packages to remove from managed hosts
 - name: Manage Basic Packages on System
   hosts: all
+  ignore_unreachable: true
   become: true
   vars:
     pkgs_to_install:

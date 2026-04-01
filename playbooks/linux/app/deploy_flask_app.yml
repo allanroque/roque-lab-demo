@@ -8,6 +8,7 @@
 #   - app_env: Ambiente (default: production)
 - name: Deploy de aplicacao Flask no RHEL
   hosts: all
+  ignore_unreachable: true
   gather_facts: true
   become: true
 

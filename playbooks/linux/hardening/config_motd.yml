@@ -6,6 +6,7 @@
 
 - name: Configure Message of the Day (MOTD)
   hosts: all
+  ignore_unreachable: true
   become: true
   gather_facts: true
 

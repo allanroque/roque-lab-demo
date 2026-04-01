@@ -11,6 +11,7 @@
 
 - name: Criar usuário no PostgreSQL com acesso a banco via Survey (AAP)
   hosts: all
+  ignore_unreachable: true
   become: true
   gather_facts: false
 

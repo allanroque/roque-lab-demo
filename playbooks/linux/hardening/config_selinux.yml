@@ -6,6 +6,7 @@
 
 - name: Configure SELinux Settings
   hosts: all
+  ignore_unreachable: true
   become: true
   gather_facts: false
 

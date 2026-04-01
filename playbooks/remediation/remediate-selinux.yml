@@ -7,6 +7,7 @@
 # =========================================================================
 - name: Remediacao - Reativar SELinux em modo enforcing
   hosts: "{{ target_host | default('target') }}"
+  ignore_unreachable: true
   become: true
   gather_facts: true
 

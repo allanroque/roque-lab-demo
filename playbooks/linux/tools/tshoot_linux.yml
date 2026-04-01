@@ -3,6 +3,7 @@
 # No user variables required - collects system performance data
 - name: Gather debug info
   hosts: all
+  ignore_unreachable: true
   become: true
 
   tasks:

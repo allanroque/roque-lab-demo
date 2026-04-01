@@ -5,6 +5,7 @@
 #   selinux_state:  string - SELinux state (default: enforcing)
 - name: Configure SELinux Settings
   hosts: all
+  ignore_unreachable: true
   become: true
 
   vars:

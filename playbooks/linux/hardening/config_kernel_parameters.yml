@@ -6,6 +6,7 @@
 
 - name: Configurar parâmetros de kernel
   hosts: all
+  ignore_unreachable: true
   become: true
   gather_facts: false
 

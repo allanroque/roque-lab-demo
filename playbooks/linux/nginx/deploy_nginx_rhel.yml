@@ -8,6 +8,7 @@
 # ============================================================
 - name: Deploy Parasol Insurance Website to RHEL 9 with Nginx
   hosts: all
+  ignore_unreachable: true
   become: true
   gather_facts: false
 

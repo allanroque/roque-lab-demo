@@ -248,7 +248,7 @@ def find_or_create_inventory():
         gid = p["id"]
         print(f"Created group id={gid}")
 
-    for gname in ("nginx", "apache", "postgresql", "infra-3-tier"):
+    for gname in ("infra", "nginx", "apache", "postgresql", "infra-3-tier"):
         r = api("GET", f"/groups/?inventory={inv}&name={gname}")
         if r["count"]:
             print(f"Group {gname} exists id={r['results'][0]['id']}")
@@ -319,6 +319,25 @@ def jt_exists(project_id, name):
     return r["results"][0]["id"] if r["count"] else None
 
 
+def default_limit_for_jt(name: str) -> str:
+    """Padrão de limit (grupo do inventário); vazio para API/localhost (AWS, SNOW, DNS, IPAM)."""
+    if name.startswith("AWS-") or name == "AWS-UPDATE-AAP-CREDENTIALS":
+        return ""
+    if name.startswith("SNOW-"):
+        return ""
+    if name.startswith("DNS-") or name.startswith("IPAM-"):
+        return ""
+    if name in ("APACHE-DEPLOY-LINUX", "APACHE-DEPLOY-LINUX-V1"):
+        return "apache"
+    if name in ("NGINX-DEPLOY-LINUX", "DEPLOY-NGINX-LINUX"):
+        return "nginx"
+    if name in ("POSTGRES-CREATE-USER", "POSTGRES-HEALTH-CHECK", "POSTGRES-DEPLOY-LINUX"):
+        return "postgresql"
+    if name in ("DEPLOY-APP-LINUX", "DEPLOY-NODEJS-LINUX"):
+        return "app"
+    return "infra"
+
+
 def associate_cred(jt_id, cred_id):
     try:
         api("POST", f"/job_templates/{jt_id}/credentials/", {"id": cred_id})
@@ -351,6 +370,7 @@ def create_job_templates(project_id, inventory_id, ssh_id, snow_id, label_map):
             "execution_environment": EE_ID,
             "become_enabled": cred_kind == "ssh",
             "diff_mode": True,
+            "limit": default_limit_for_jt(name),
         }
         if existing:
             p = api("PATCH", f"/job_templates/{existing}/", body)

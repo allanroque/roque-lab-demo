@@ -7,6 +7,7 @@
 
 - name: Manage Basic Packages on System
   hosts: all
+  ignore_unreachable: true
   become: true
   gather_facts: false
 

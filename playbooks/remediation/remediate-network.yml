@@ -12,6 +12,7 @@
 # =========================================================================
 - name: Remediacao - Problemas de rede (iptables)
   hosts: "{{ target_host | default('target') }}"
+  ignore_unreachable: true
   become: true
   gather_facts: false
 

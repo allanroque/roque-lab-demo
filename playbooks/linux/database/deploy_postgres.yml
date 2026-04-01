@@ -9,6 +9,7 @@
 #   - postgres_port: Porta do PostgreSQL (default: 5432)
 - name: Deploy PostgreSQL no RHEL
   hosts: all
+  ignore_unreachable: true
   gather_facts: true
   become: true
 

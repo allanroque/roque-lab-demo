@@ -231,6 +231,7 @@ def upsert_jt(
         "become_enabled": False,
         "diff_mode": False,
         "survey_enabled": True,
+        "limit": "",
     }
     r = api("GET", f"/job_templates/?project={project_id}&name={JT_NAME}")
     if r["count"]:

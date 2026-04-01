@@ -5,6 +5,7 @@
 #   services_to_stop:  list - Services to disable and stop
 - name: Manage Allowed and Disallowed Services
   hosts: all
+  ignore_unreachable: true
   become: true
   vars:
     services_to_start:

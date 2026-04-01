@@ -7,6 +7,7 @@
 
 - name: Manage Allowed and Disallowed Services
   hosts: all
+  ignore_unreachable: true
   become: true
   gather_facts: false
 

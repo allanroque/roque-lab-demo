@@ -17,6 +17,7 @@
 
 - name: PostgreSQL HealthCheck + Web (Apache + templates)
   hosts: all
+  ignore_unreachable: true
   become: true
   gather_facts: true
 
