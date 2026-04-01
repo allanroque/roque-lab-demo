@@ -105,10 +105,8 @@
         force_basic_auth: true
         headers:
           Content-Type: "{{ vmrest_content_type }}"
-        body_format: json
-        body:
-          name: "{{ host_fqdn }}"
-          parentId: "{{ vm_template_id }}"
+        body_format: raw
+        body: '{"name":"{{ host_fqdn }}","parentId":"{{ vm_template_id }}"}'
         status_code:
           - 200
           - 201
@@ -145,10 +143,8 @@
         force_basic_auth: true
         headers:
           Content-Type: "{{ vmrest_content_type }}"
-        body_format: json
-        body:
-          processors: "{{ host_cpus | int }}"
-          memory: "{{ host_memory_mb | int }}"
+        body_format: raw
+        body: '{"processors":{{ host_cpus | int }},"memory":{{ host_memory_mb | int }}}'
         status_code:
           - 200
           - 201
