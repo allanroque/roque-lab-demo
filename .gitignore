@@ -1,0 +1,48 @@
+# Ansible
+*.retry
+*.log
+inventory/*.ini
+inventory/*.yml
+!inventory/.gitkeep
+
+# Vault / Credenciais
+*vault*.yml
+*vault*.yaml
+*.vault
+.vault_pass
+.vault_password
+
+# Variáveis sensíveis
+host_vars/*/vault.yml
+group_vars/*/vault.yml
+
+# Claude
+CLAUDE.md
+.claude/
+
+# Editor / IDE
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python / venv
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Collections locais (não versionar no repo AAP)
+collections/
+
+# Temporários
+*.tmp
+*.bak
+
+#mcp server
+.mcp.json

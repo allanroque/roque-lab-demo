@@ -86,7 +86,7 @@
         - service
         - healthcheck
 
-    - name: Verificar se PostgreSQL está habilitado no boot
+    - name: Verificar se PostgreSQL está habilitado no boot # noqa: command-instead-of-module
       ansible.builtin.command:
         cmd: systemctl is-enabled postgresql
       register: svc_enabled
@@ -365,7 +365,7 @@
     - name: Coletar informações de DNS/resolv.conf
       ansible.builtin.shell:
         cmd: |
-          grep -E '^(nameserver|search|domain)' /etc/resolv.conf 2>/dev/null || echo "resolv.conf n/a"
+          set -o pipefail && grep -E '^(nameserver|search|domain)' /etc/resolv.conf 2>/dev/null || echo "resolv.conf n/a"
       register: dns_out
       changed_when: false
       failed_when: false
@@ -418,8 +418,14 @@
           collected_at: "{{ ansible_date_time.iso8601 | default('') }}"
           host: "{{ inventory_hostname | default('') }}"
           os:
-            distro: "{{ ((ansible_facts.distribution | default(ansible_distribution | default(''))) ~ ' ' ~ (ansible_facts.distribution_version | default(ansible_distribution_version | default('')))) }}"
-            kernel: "{{ ((ansible_facts.kernel | default(ansible_system | default(''))) ~ ' ' ~ (ansible_facts.kernel_release | default(ansible_kernel | default('')))) }}"
+            distro: >-
+              {{ ((ansible_facts.distribution | default(ansible_distribution | default('')))
+              ~ ' ' ~
+              (ansible_facts.distribution_version | default(ansible_distribution_version | default('')))) }}
+            kernel: >-
+              {{ ((ansible_facts.kernel | default(ansible_system | default('')))
+              ~ ' ' ~
+              (ansible_facts.kernel_release | default(ansible_kernel | default('')))) }}
             arch: "{{ ansible_facts.architecture | default(ansible_architecture | default('')) }}"
             uptime: "{{ uptime_h | default('') }}"
             mem_mb: "{{ ansible_facts.memtotal_mb | default(0) }}"
@@ -429,7 +435,10 @@
             thp: "{{ thp_out.stdout | default('') }}"
             dns: "{{ dns_out.stdout | default('') }}"
           service:
-            status: "active={{ _svc_state | default('unknown') }}, detail={{ _svc_status | default('') }}, enabled={{ svc_enabled.stdout | default('unknown') }}"
+            status: >-
+              active={{ _svc_state | default('unknown') }},
+              detail={{ _svc_status | default('') }},
+              enabled={{ svc_enabled.stdout | default('unknown') }}
             bin_version: "{{ bin_ver.stdout | default('') }}"
             dirs: "{{ dir_out.stdout | default('') }}"
             network: "{{ net_out.stdout | default('') }}"
@@ -491,7 +500,7 @@
         src: "files/styles.css"
         dest: "{{ web_root }}/styles.css"
         mode: "0644"
-      notify: reload apache
+      notify: Reload Apache
       tags:
         - web
         - healthcheck
@@ -501,7 +510,7 @@
         src: "files/app.js"
         dest: "{{ web_root }}/app.js"
         mode: "0644"
-      notify: reload apache
+      notify: Reload Apache
       tags:
         - web
         - healthcheck
@@ -511,13 +520,13 @@
         src: "templates/index.html.j2"
         dest: "{{ web_root }}/index.html"
         mode: "0644"
-      notify: reload apache
+      notify: Reload Apache
       tags:
         - web
         - healthcheck
 
   handlers:
-    - name: reload apache
+    - name: Reload Apache
       ansible.builtin.systemd:
         name: httpd
         state: reloaded

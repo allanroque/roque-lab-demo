@@ -33,7 +33,7 @@
         state: started
         enabled: true
       loop: "{{ services_to_start }}"
-      ignore_errors: true
+      failed_when: false
       tags:
         - service_management
 
@@ -43,6 +43,6 @@
         state: stopped
         enabled: false
       loop: "{{ services_to_stop }}"
-      ignore_errors: true
+      failed_when: false
       tags:
         - service_management
