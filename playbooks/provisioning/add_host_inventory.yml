@@ -35,7 +35,10 @@
     host_memory: "{{ host_memory_mb | default(2048) }}"
     host_disk: ""
     aap_inventory: "INV-ROQUE-LAB"
-    aap_base_url: "https://{{ controller_host }}/api/v2"
+    aap_host: "{{ controller_host | default(lookup('env', 'CONTROLLER_HOST')) }}"
+    aap_user: "{{ controller_username | default(lookup('env', 'CONTROLLER_USERNAME')) }}"
+    aap_pass: "{{ controller_password | default(lookup('env', 'CONTROLLER_PASSWORD')) }}"
+    aap_base_url: "https://{{ aap_host }}/api/v2"
 
   tasks:
     # ── Validacao ────────────────────────────────────────────────────────────
@@ -62,8 +65,8 @@
       ansible.builtin.uri:
         url: "{{ aap_base_url }}/inventories/?name={{ aap_inventory | urlencode }}"
         method: GET
-        url_username: "{{ controller_username }}"
-        url_password: "{{ controller_password }}"
+        url_username: "{{ aap_user }}"
+        url_password: "{{ aap_pass }}"
         force_basic_auth: true
         validate_certs: false
         return_content: true
@@ -94,8 +97,8 @@
       ansible.builtin.uri:
         url: "{{ aap_base_url }}/inventories/{{ inv_id }}/groups/"
         method: POST
-        url_username: "{{ controller_username }}"
-        url_password: "{{ controller_password }}"
+        url_username: "{{ aap_user }}"
+        url_password: "{{ aap_pass }}"
         force_basic_auth: true
         validate_certs: false
         body_format: json
@@ -117,8 +120,8 @@
       ansible.builtin.uri:
         url: "{{ aap_base_url }}/inventories/{{ inv_id }}/groups/"
         method: POST
-        url_username: "{{ controller_username }}"
-        url_password: "{{ controller_password }}"
+        url_username: "{{ aap_user }}"
+        url_password: "{{ aap_pass }}"
         force_basic_auth: true
         validate_certs: false
         body_format: json
@@ -141,8 +144,8 @@
       ansible.builtin.uri:
         url: "{{ aap_base_url }}/inventories/{{ inv_id }}/groups/?name={{ host_role | urlencode }}"
         method: GET
-        url_username: "{{ controller_username }}"
-        url_password: "{{ controller_password }}"
+        url_username: "{{ aap_user }}"
+        url_password: "{{ aap_pass }}"
         force_basic_auth: true
         validate_certs: false
         return_content: true
@@ -155,8 +158,8 @@
       ansible.builtin.uri:
         url: "{{ aap_base_url }}/inventories/{{ inv_id }}/groups/?name={{ host_group | urlencode }}"
         method: GET
-        url_username: "{{ controller_username }}"
-        url_password: "{{ controller_password }}"
+        url_username: "{{ aap_user }}"
+        url_password: "{{ aap_pass }}"
         force_basic_auth: true
         validate_certs: false
         return_content: true
@@ -178,8 +181,8 @@
       ansible.builtin.uri:
         url: "{{ aap_base_url }}/inventories/{{ inv_id }}/hosts/"
         method: POST
-        url_username: "{{ controller_username }}"
-        url_password: "{{ controller_password }}"
+        url_username: "{{ aap_user }}"
+        url_password: "{{ aap_pass }}"
         force_basic_auth: true
         validate_certs: false
         body_format: json
@@ -204,8 +207,8 @@
       ansible.builtin.uri:
         url: "{{ aap_base_url }}/inventories/{{ inv_id }}/hosts/?name={{ host_fqdn | urlencode }}"
         method: GET
-        url_username: "{{ controller_username }}"
-        url_password: "{{ controller_password }}"
+        url_username: "{{ aap_user }}"
+        url_password: "{{ aap_pass }}"
         force_basic_auth: true
         validate_certs: false
         return_content: true
@@ -226,8 +229,8 @@
       ansible.builtin.uri:
         url: "{{ aap_base_url }}/hosts/{{ aap_host_id }}/"
         method: PATCH
-        url_username: "{{ controller_username }}"
-        url_password: "{{ controller_password }}"
+        url_username: "{{ aap_user }}"
+        url_password: "{{ aap_pass }}"
         force_basic_auth: true
         validate_certs: false
         body_format: json
@@ -246,8 +249,8 @@
       ansible.builtin.uri:
         url: "{{ aap_base_url }}/groups/{{ group_role_id }}/hosts/"
         method: POST
-        url_username: "{{ controller_username }}"
-        url_password: "{{ controller_password }}"
+        url_username: "{{ aap_user }}"
+        url_password: "{{ aap_pass }}"
         force_basic_auth: true
         validate_certs: false
         body_format: json
@@ -267,8 +270,8 @@
       ansible.builtin.uri:
         url: "{{ aap_base_url }}/groups/{{ group_env_id }}/hosts/"
         method: POST
-        url_username: "{{ controller_username }}"
-        url_password: "{{ controller_password }}"
+        url_username: "{{ aap_user }}"
+        url_password: "{{ aap_pass }}"
         force_basic_auth: true
         validate_certs: false
         body_format: json
