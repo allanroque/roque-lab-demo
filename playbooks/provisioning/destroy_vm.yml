@@ -139,6 +139,13 @@
         - vmware
 
     # ── Remover VM ───────────────────────────────────────────────────────────
+    - name: Aguardar liberacao do lock da VM
+      ansible.builtin.pause:
+        seconds: 10
+      tags:
+        - provisioning
+        - vmware
+
     - name: Remover VM {{ host_fqdn }} do hypervisor
       ansible.builtin.uri:
         url: "{{ vmrest_base_url }}/vms/{{ vm_id }}"
@@ -149,6 +156,10 @@
         status_code:
           - 200
           - 204
+      register: vm_delete
+      until: vm_delete.status in [200, 204]
+      retries: 3
+      delay: 10
       tags:
         - provisioning
         - vmware
