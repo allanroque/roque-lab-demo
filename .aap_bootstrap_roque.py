@@ -45,6 +45,7 @@ PLAYBOOKS = [
     ("playbooks/ipam/del_ip.yml", "IPAM-DEL-IP", "ssh", "ipam"),
     ("playbooks/ipam/get_next_ip.yml", "IPAM-GET-NEXT-IP", "ssh", "ipam"),
     ("playbooks/provisioning/provision_vm.yml", "PROVISION-VM-LOCAL", "none", "provisioning"),
+    ("playbooks/provisioning/destroy_vm.yml", "DESTROY-VM-LOCAL", "ssh_vmware", "provisioning"),
     ("playbooks/linux/adhoc/adhoc_checklist.yml", "LINUX-ADHOC-CHECKLIST", "ssh", "linux"),
     ("playbooks/linux/adhoc/adhoc_command.yml", "LINUX-ADHOC-COMMAND", "ssh", "linux"),
     ("playbooks/linux/adhoc/adhoc_logcollector.yml", "LINUX-ADHOC-LOGCOLLECTOR", "ssh", "linux"),
@@ -333,7 +334,7 @@ def default_limit_for_jt(name: str) -> str:
         return ""
     if name.startswith("DNS-") or name.startswith("IPAM-"):
         return ""
-    if name.startswith("PROVISION-"):
+    if name.startswith("PROVISION-") or name.startswith("DESTROY-"):
         return ""
     if name in ("APACHE-DEPLOY-LINUX", "APACHE-DEPLOY-LINUX-V1"):
         return "apache"
@@ -362,6 +363,12 @@ def associate_label(jt_id, label_id):
         pass
 
 
+def credential_id_by_name(name: str):
+    """Credencial na org ROQUE pelo nome exato (ex.: CRED-VMWARE-ROQUE)."""
+    r = api("GET", f"/credentials/?organization={ORG_ID}&name={name}")
+    return r["results"][0]["id"] if r["count"] else None
+
+
 def create_job_templates(project_id, inventory_id, ssh_id, snow_id, label_map):
     jt_by_name = {}
     for playbook, name, cred_kind, lab in PLAYBOOKS:
@@ -370,6 +377,9 @@ def create_job_templates(project_id, inventory_id, ssh_id, snow_id, label_map):
             become = True
         elif cred_kind == "snow":
             cred_id = snow_id
+            become = False
+        elif cred_kind == "ssh_vmware":
+            cred_id = None
             become = False
         else:
             cred_id = None
@@ -396,7 +406,15 @@ def create_job_templates(project_id, inventory_id, ssh_id, snow_id, label_map):
             p = api("POST", "/job_templates/", body)
             jtid = p["id"]
             print(f"Created JT {name} id={jtid}")
-        if cred_id is not None:
+        if cred_kind == "ssh_vmware":
+            if ssh_id is not None:
+                associate_cred(jtid, ssh_id)
+            vmw = credential_id_by_name("CRED-VMWARE-ROQUE")
+            if vmw is not None:
+                associate_cred(jtid, vmw)
+            else:
+                print(f"WARN: CRED-VMWARE-ROQUE não encontrada — associe manualmente ao JT {name}")
+        elif cred_id is not None:
             associate_cred(jtid, cred_id)
         for lbl in all_labels_for_jt(name, lab):
             associate_label(jtid, label_map[lbl])

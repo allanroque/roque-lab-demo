@@ -508,6 +508,31 @@ SURVEYS = [
             ],
         },
     ),
+    (
+        "DESTROY-VM-LOCAL",
+        {
+            "name": "",
+            "description": "destroy_vm.yml — desliga e remove VM no Fusion (vmrest); credenciais SSH + VMware REST no JT",
+            "spec": [
+                q_text(
+                    "host_name",
+                    "Nome do host (curto)",
+                    "Ex: server10 — deve corresponder ao nome da VM no hypervisor",
+                    "",
+                    True,
+                    128,
+                ),
+                q_text(
+                    "host_domain",
+                    "Domínio DNS",
+                    "Sufixo do FQDN da VM",
+                    "aroque.com.br",
+                    False,
+                    128,
+                ),
+            ],
+        },
+    ),
 ]
 
 

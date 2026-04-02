@@ -1,0 +1,183 @@
+---
+# =============================================================================
+# Playbook: Desligar e remover VM no VMware Fusion via vmrest API
+# Descricao: Desliga a VM (se ligada), aguarda powerOff e remove do hypervisor
+#
+# Variaveis para Survey do AAP:
+#   host_name        - Nome curto do host (ex: server10) [obrigatorio]
+#   host_domain      - Dominio do host (default: aroque.com.br)
+#
+# Credenciais (injetadas via CRED-VMWARE-ROQUE, credential type: VMware Fusion REST API):
+#   vmrest_host      - IP do hypervisor (extra_vars via injector)
+#   vmrest_port      - Porta do vmrest (extra_vars via injector, default: 8698)
+#   vmrest_user      - Usuario vmrest (extra_vars via injector)
+#   vmrest_password  - Senha vmrest (extra_vars via injector, secret)
+# =============================================================================
+- name: Desligar e remover VM no VMware Fusion
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    host_name: ""
+    host_domain: "aroque.com.br"
+    vmrest_base_url: "http://{{ vmrest_host }}:{{ vmrest_port }}/api"
+    vmrest_content_type: "application/vnd.vmware.vmw.rest-v1+json"
+
+  tasks:
+    - name: Validar variavel obrigatoria
+      ansible.builtin.assert:
+        that:
+          - host_name | length > 0
+        fail_msg: "A variavel host_name e obrigatoria"
+        quiet: true
+      tags:
+        - provisioning
+        - vmware
+        - validate
+
+    - name: Construir FQDN do host
+      ansible.builtin.set_fact:
+        host_fqdn: "{{ host_name.split('.')[0] }}.{{ host_domain }}"
+      tags:
+        - provisioning
+        - vmware
+
+    # ── Localizar VM ─────────────────────────────────────────────────────────
+    - name: Listar VMs existentes
+      ansible.builtin.uri:
+        url: "{{ vmrest_base_url }}/vms"
+        method: GET
+        url_username: "{{ vmrest_user }}"
+        url_password: "{{ vmrest_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: vm_list
+      tags:
+        - provisioning
+        - vmware
+
+    - name: Localizar VM {{ host_fqdn }}
+      ansible.builtin.set_fact:
+        vm_found: "{{ vm_list.json | selectattr('path', 'search', host_fqdn) | list }}"
+      tags:
+        - provisioning
+        - vmware
+
+    - name: Falhar se VM nao encontrada
+      ansible.builtin.assert:
+        that:
+          - vm_found | length > 0
+        fail_msg: "VM '{{ host_fqdn }}' nao encontrada no hypervisor"
+        quiet: true
+      tags:
+        - provisioning
+        - vmware
+
+    - name: Registrar ID e path da VM
+      ansible.builtin.set_fact:
+        vm_id: "{{ vm_found[0].id }}"
+        vm_path: "{{ vm_found[0].path }}"
+      tags:
+        - provisioning
+        - vmware
+
+    - name: Exibir VM encontrada
+      ansible.builtin.debug:
+        msg: "VM {{ host_fqdn }} encontrada — ID: {{ vm_id }} | Path: {{ vm_path }}"
+      tags:
+        - provisioning
+        - vmware
+
+    # ── Desligar VM ──────────────────────────────────────────────────────────
+    - name: Verificar estado da VM
+      ansible.builtin.uri:
+        url: "{{ vmrest_base_url }}/vms/{{ vm_id }}/power"
+        method: GET
+        url_username: "{{ vmrest_user }}"
+        url_password: "{{ vmrest_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: vm_power_state
+      tags:
+        - provisioning
+        - vmware
+
+    - name: Desligar VM {{ host_fqdn }}
+      ansible.builtin.uri:
+        url: "{{ vmrest_base_url }}/vms/{{ vm_id }}/power"
+        method: PUT
+        url_username: "{{ vmrest_user }}"
+        url_password: "{{ vmrest_password }}"
+        force_basic_auth: true
+        headers:
+          Content-Type: "{{ vmrest_content_type }}"
+        body: "off"
+        status_code:
+          - 200
+          - 201
+        return_content: true
+      when: vm_power_state.json.power_state | default('') != 'poweredOff'
+      tags:
+        - provisioning
+        - vmware
+
+    - name: Aguardar VM desligar
+      ansible.builtin.uri:
+        url: "{{ vmrest_base_url }}/vms/{{ vm_id }}/power"
+        method: GET
+        url_username: "{{ vmrest_user }}"
+        url_password: "{{ vmrest_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: vm_off_check
+      until: vm_off_check.json.power_state | default('') == 'poweredOff'
+      retries: 12
+      delay: 5
+      when: vm_power_state.json.power_state | default('') != 'poweredOff'
+      tags:
+        - provisioning
+        - vmware
+
+    # ── Remover VM ───────────────────────────────────────────────────────────
+    - name: Remover VM {{ host_fqdn }} do hypervisor
+      ansible.builtin.uri:
+        url: "{{ vmrest_base_url }}/vms/{{ vm_id }}"
+        method: DELETE
+        url_username: "{{ vmrest_user }}"
+        url_password: "{{ vmrest_password }}"
+        force_basic_auth: true
+        status_code:
+          - 200
+          - 204
+      tags:
+        - provisioning
+        - vmware
+
+    # ── Resumo ───────────────────────────────────────────────────────────────
+    - name: Exibir resultado
+      ansible.builtin.debug:
+        msg:
+          - "================================================"
+          - " VM Removida com Sucesso"
+          - "================================================"
+          - " FQDN   : {{ host_fqdn }}"
+          - " VM ID  : {{ vm_id }}"
+          - " Path   : {{ vm_path }}"
+          - "================================================"
+      tags:
+        - provisioning
+        - vmware
+
+    - name: Exportar dados para workflow
+      ansible.builtin.set_stats:
+        data:
+          host_name: "{{ host_name }}"
+          host_fqdn: "{{ host_fqdn }}"
+          vm_id: "{{ vm_id }}"
+          vm_destroyed: true
+          sn_short_description: "Destroyed VM {{ host_fqdn }}"
+          sn_description: "VM {{ host_fqdn }} (ID: {{ vm_id }}) removed from hypervisor {{ vmrest_host }}"
+      tags:
+        - provisioning
+        - vmware
+        - export
