@@ -36,14 +36,14 @@
 
     - name: Construir FQDN do host
       ansible.builtin.set_fact:
-        host_fqdn: "{{ host_name.split('.')[0] }}.{{ host_domain }}"
+        _fqdn: "{{ host_name.split('.')[0] }}.{{ host_domain }}"
       tags:
         - provisioning
         - inventory
 
-    - name: Remover host {{ host_fqdn }} do inventario {{ aap_inventory }}
+    - name: Remover host {{ _fqdn }} do inventario {{ aap_inventory }}
       ansible.controller.host:
-        name: "{{ host_fqdn }}"
+        name: "{{ _fqdn }}"
         inventory: "{{ aap_inventory }}"
         state: absent
       tags:
@@ -53,7 +53,7 @@
 
     - name: Exibir resultado
       ansible.builtin.debug:
-        msg: "Host {{ host_fqdn }} removido do inventario {{ aap_inventory }}"
+        msg: "Host {{ _fqdn }} removido do inventario {{ aap_inventory }}"
       tags:
         - provisioning
         - inventory
@@ -62,10 +62,10 @@
       ansible.builtin.set_stats:
         data:
           host_name: "{{ host_name }}"
-          host_fqdn: "{{ host_fqdn }}"
+          host_fqdn: "{{ _fqdn }}"
           aap_inventory: "{{ aap_inventory }}"
           inventory_host_removed: true
-          sn_short_description: "Removed {{ host_fqdn }} from inventory {{ aap_inventory }}"
+          sn_short_description: "Removed {{ _fqdn }} from inventory {{ aap_inventory }}"
       tags:
         - provisioning
         - inventory

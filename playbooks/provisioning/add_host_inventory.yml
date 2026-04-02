@@ -51,7 +51,7 @@
 
     - name: Construir FQDN do host
       ansible.builtin.set_fact:
-        host_fqdn: "{{ host_name.split('.')[0] }}.{{ host_domain }}"
+        _fqdn: "{{ host_name.split('.')[0] }}.{{ host_domain }}"
       tags:
         - provisioning
         - inventory
@@ -82,9 +82,9 @@
         - group
 
     # ── Criar host ───────────────────────────────────────────────────────────
-    - name: Adicionar host {{ host_fqdn }} ao inventario {{ aap_inventory }}
+    - name: Adicionar host {{ _fqdn }} ao inventario {{ aap_inventory }}
       ansible.controller.host:
-        name: "{{ host_fqdn }}"
+        name: "{{ _fqdn }}"
         inventory: "{{ aap_inventory }}"
         description: "{{ host_description }}"
         enabled: true
@@ -103,12 +103,12 @@
         - host
 
     # ── Associar host aos grupos ─────────────────────────────────────────────
-    - name: Associar {{ host_fqdn }} ao grupo {{ host_role }}
+    - name: Associar {{ _fqdn }} ao grupo {{ host_role }}
       ansible.controller.group:
         name: "{{ host_role }}"
         inventory: "{{ aap_inventory }}"
         hosts:
-          - "{{ host_fqdn }}"
+          - "{{ _fqdn }}"
         preserve_existing_hosts: true
         state: present
       tags:
@@ -116,12 +116,12 @@
         - inventory
         - group
 
-    - name: Associar {{ host_fqdn }} ao grupo {{ host_group }}
+    - name: Associar {{ _fqdn }} ao grupo {{ host_group }}
       ansible.controller.group:
         name: "{{ host_group }}"
         inventory: "{{ aap_inventory }}"
         hosts:
-          - "{{ host_fqdn }}"
+          - "{{ _fqdn }}"
         preserve_existing_hosts: true
         state: present
       tags:
@@ -136,7 +136,7 @@
           - "================================================"
           - " Host adicionado ao inventario AAP"
           - "================================================"
-          - " Host       : {{ host_fqdn }}"
+          - " Host       : {{ _fqdn }}"
           - " IP         : {{ host_ip }}"
           - " Inventario : {{ aap_inventory }}"
           - " Grupos     : {{ host_role }}, {{ host_group }}"
@@ -150,7 +150,7 @@
       ansible.builtin.set_stats:
         data:
           host_name: "{{ host_name }}"
-          host_fqdn: "{{ host_fqdn }}"
+          host_fqdn: "{{ _fqdn }}"
           host_ip: "{{ host_ip }}"
           host_role: "{{ host_role }}"
           host_group: "{{ host_group }}"
