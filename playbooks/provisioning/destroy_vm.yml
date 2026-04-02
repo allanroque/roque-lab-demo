@@ -1,7 +1,7 @@
 ---
 # =============================================================================
 # Playbook: Desligar e remover VM no VMware Fusion via vmrest API
-# Descricao: Desliga a VM (se ligada), aguarda powerOff e remove do hypervisor
+# Descricao: Desliga a VM e remove os arquivos do hypervisor
 #
 # Variaveis para Survey do AAP:
 #   host_name        - Nome curto do host (ex: server10) [obrigatorio]
@@ -20,6 +20,7 @@
   vars:
     host_name: ""
     host_domain: "aroque.com.br"
+    vm_base_path: "/Users/aroque/Virtual Machines.localized"
     vmrest_base_url: "http://{{ vmrest_host }}:{{ vmrest_port }}/api"
     vmrest_content_type: "application/vnd.vmware.vmw.rest-v1+json"
 
@@ -77,6 +78,7 @@
       ansible.builtin.set_fact:
         vm_id: "{{ vm_found[0].id }}"
         vm_path: "{{ vm_found[0].path }}"
+        vm_dir: "{{ vm_found[0].path | dirname }}"
       tags:
         - provisioning
         - vmware
@@ -138,28 +140,35 @@
         - provisioning
         - vmware
 
-    # ── Remover VM ───────────────────────────────────────────────────────────
-    - name: Aguardar liberacao do lock da VM
-      ansible.builtin.pause:
-        seconds: 10
+    # ── Remover arquivos da VM ───────────────────────────────────────────────
+    - name: Remover diretorio da VM {{ host_fqdn }}
+      ansible.builtin.file:
+        path: "{{ vm_dir }}"
+        state: absent
+      delegate_to: "{{ vmrest_host }}"
+      vars:
+        ansible_connection: local
       tags:
         - provisioning
         - vmware
 
-    - name: Remover VM {{ host_fqdn }} do hypervisor
+    # ── Verificar remocao ────────────────────────────────────────────────────
+    - name: Verificar que VM foi removida da API
       ansible.builtin.uri:
-        url: "{{ vmrest_base_url }}/vms/{{ vm_id }}"
-        method: DELETE
+        url: "{{ vmrest_base_url }}/vms"
+        method: GET
         url_username: "{{ vmrest_user }}"
         url_password: "{{ vmrest_password }}"
         force_basic_auth: true
-        status_code:
-          - 200
-          - 204
-      register: vm_delete
-      until: vm_delete.status in [200, 204]
-      retries: 3
-      delay: 10
+        return_content: true
+      register: vm_list_after
+      tags:
+        - provisioning
+        - vmware
+
+    - name: Confirmar remocao
+      ansible.builtin.set_fact:
+        vm_removed: "{{ vm_list_after.json | selectattr('path', 'search', host_fqdn) | list | length == 0 }}"
       tags:
         - provisioning
         - vmware
@@ -169,11 +178,12 @@
       ansible.builtin.debug:
         msg:
           - "================================================"
-          - " VM Removida com Sucesso"
+          - " VM Removida"
           - "================================================"
-          - " FQDN   : {{ host_fqdn }}"
-          - " VM ID  : {{ vm_id }}"
-          - " Path   : {{ vm_path }}"
+          - " FQDN     : {{ host_fqdn }}"
+          - " VM ID    : {{ vm_id }}"
+          - " Path     : {{ vm_dir }}"
+          - " Removida : {{ vm_removed }}"
           - "================================================"
       tags:
         - provisioning
@@ -185,7 +195,7 @@
           host_name: "{{ host_name }}"
           host_fqdn: "{{ host_fqdn }}"
           vm_id: "{{ vm_id }}"
-          vm_destroyed: true
+          vm_destroyed: "{{ vm_removed }}"
           sn_short_description: "Destroyed VM {{ host_fqdn }}"
           sn_description: "VM {{ host_fqdn }} (ID: {{ vm_id }}) removed from hypervisor {{ vmrest_host }}"
       tags:
