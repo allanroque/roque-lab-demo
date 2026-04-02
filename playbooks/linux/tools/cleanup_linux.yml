@@ -1,0 +1,197 @@
+---
+# =============================================================================
+# Playbook: Limpeza de servicos e pacotes no RHEL
+# Descricao: Para servicos, remove pacotes e limpa residuos de labs
+#
+# Variaveis para Survey do AAP:
+#   cleanup_apache   - Remover Apache httpd (yes/no, default: yes)
+#   cleanup_nginx    - Remover Nginx (yes/no, default: yes)
+#   cleanup_nodejs   - Remover app Flask/NodeJS (yes/no, default: no)
+#   cleanup_postgres - Remover PostgreSQL (yes/no, default: no)
+# =============================================================================
+- name: Limpeza de servicos e pacotes no RHEL
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    cleanup_apache: "yes"
+    cleanup_nginx: "yes"
+    cleanup_nodejs: "no"
+    cleanup_postgres: "no"
+
+  tasks:
+    # ── Apache ───────────────────────────────────────────────────────────────
+    - name: Parar e desabilitar Apache
+      ansible.builtin.systemd:
+        name: httpd
+        state: stopped
+        enabled: false
+      failed_when: false
+      when: cleanup_apache == "yes"
+      tags:
+        - linux
+        - cleanup
+        - apache
+
+    - name: Remover pacotes do Apache
+      ansible.builtin.dnf:
+        name:
+          - httpd
+          - mod_ssl
+        state: absent
+      when: cleanup_apache == "yes"
+      tags:
+        - linux
+        - cleanup
+        - apache
+
+    - name: Remover conteudo web do Apache
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /var/www/html/index.html
+        - /var/www/html/pg-health
+      when: cleanup_apache == "yes"
+      tags:
+        - linux
+        - cleanup
+        - apache
+
+    # ── Nginx ────────────────────────────────────────────────────────────────
+    - name: Parar e desabilitar Nginx
+      ansible.builtin.systemd:
+        name: nginx
+        state: stopped
+        enabled: false
+      failed_when: false
+      when: cleanup_nginx == "yes"
+      tags:
+        - linux
+        - cleanup
+        - nginx
+
+    - name: Remover pacotes do Nginx
+      ansible.builtin.dnf:
+        name: nginx
+        state: absent
+      when: cleanup_nginx == "yes"
+      tags:
+        - linux
+        - cleanup
+        - nginx
+
+    - name: Remover conteudo web do Nginx
+      ansible.builtin.file:
+        path: /usr/share/nginx/html
+        state: absent
+      when: cleanup_nginx == "yes"
+      tags:
+        - linux
+        - cleanup
+        - nginx
+
+    # ── App Flask / NodeJS ───────────────────────────────────────────────────
+    - name: Parar e desabilitar servico myapp
+      ansible.builtin.systemd:
+        name: myapp
+        state: stopped
+        enabled: false
+      failed_when: false
+      when: cleanup_nodejs == "yes"
+      tags:
+        - linux
+        - cleanup
+        - app
+
+    - name: Remover unit file e diretorio da app
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/myapp.service
+        - /opt/app
+      when: cleanup_nodejs == "yes"
+      tags:
+        - linux
+        - cleanup
+        - app
+
+    - name: Recarregar systemd apos remocao de unit files
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: cleanup_nodejs == "yes"
+      tags:
+        - linux
+        - cleanup
+        - app
+
+    # ── PostgreSQL ───────────────────────────────────────────────────────────
+    - name: Parar e desabilitar PostgreSQL
+      ansible.builtin.systemd:
+        name: postgresql
+        state: stopped
+        enabled: false
+      failed_when: false
+      when: cleanup_postgres == "yes"
+      tags:
+        - linux
+        - cleanup
+        - postgres
+
+    - name: Remover pacotes do PostgreSQL
+      ansible.builtin.dnf:
+        name:
+          - postgresql-server
+          - postgresql-contrib
+        state: absent
+      when: cleanup_postgres == "yes"
+      tags:
+        - linux
+        - cleanup
+        - postgres
+
+    - name: Remover dados do PostgreSQL
+      ansible.builtin.file:
+        path: /var/lib/pgsql/data
+        state: absent
+      when: cleanup_postgres == "yes"
+      tags:
+        - linux
+        - cleanup
+        - postgres
+
+    # ── Limpeza geral ────────────────────────────────────────────────────────
+    - name: Limpar cache do DNF
+      ansible.builtin.dnf:
+        autoremove: true
+      tags:
+        - linux
+        - cleanup
+
+    - name: Limpar arquivos temporarios
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/parasol-website
+      tags:
+        - linux
+        - cleanup
+
+    # ── Resumo ───────────────────────────────────────────────────────────────
+    - name: Exibir resumo da limpeza
+      ansible.builtin.debug:
+        msg:
+          - "================================================"
+          - " Limpeza concluida em {{ inventory_hostname }}"
+          - "================================================"
+          - " Apache     : {{ 'removido' if cleanup_apache == 'yes' else 'mantido' }}"
+          - " Nginx      : {{ 'removido' if cleanup_nginx == 'yes' else 'mantido' }}"
+          - " App Flask  : {{ 'removido' if cleanup_nodejs == 'yes' else 'mantido' }}"
+          - " PostgreSQL : {{ 'removido' if cleanup_postgres == 'yes' else 'mantido' }}"
+          - "================================================"
+      tags:
+        - linux
+        - cleanup

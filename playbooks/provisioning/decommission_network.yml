@@ -1,0 +1,159 @@
+---
+# =============================================================================
+# Playbook: Remover host da rede (DNS + IPAM)
+# Descricao: Recebe o IP, resolve o hostname via DNS reverso, remove registros
+#            A e PTR do DNS e remove o IP do IPAM (NetBox)
+#
+# Variaveis para Survey do AAP (ou recebidas via set_stats do workflow):
+#   host_ip          - IP do host a remover [obrigatorio]
+#   host_name        - Nome curto do host (opcional, resolvido via DNS reverso)
+#   host_domain      - Dominio do host (default: aroque.com.br)
+#   dns_server       - IP do servidor DNS (default: 192.168.100.11)
+#   dns_zone         - Zona DNS direta (default: aroque.com.br)
+#   dns_reverse_zone - Zona DNS reversa (default: 100.168.192.in-addr.arpa)
+#   dns_key_name     - Nome da chave TSIG (default: ansible-key)
+#   dns_key_secret   - Segredo da chave TSIG  # Configurado no AAP Controller
+#   dns_key_algorithm - Algoritmo da chave (default: hmac-sha256)
+#   net_cidr         - Mascara CIDR da rede (default: 24)
+#   netbox_url       - URL do NetBox  # Configurado no AAP Controller
+#   netbox_token     - Token do NetBox  # Configurado no AAP Controller
+# =============================================================================
+- name: Remover host da rede (DNS A + PTR + IPAM)
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    host_ip: ""
+    host_name: ""
+    host_domain: "aroque.com.br"
+    dns_server: "192.168.100.11"
+    dns_zone: "aroque.com.br"
+    dns_reverse_zone: "100.168.192.in-addr.arpa"
+    dns_key_name: "ansible-key"
+    dns_key_secret: ""
+    dns_key_algorithm: "hmac-sha256"
+    net_cidr: "24"
+    netbox_url: ""
+    netbox_token: ""
+
+  tasks:
+    # ── Validacao ────────────────────────────────────────────────────────────
+    - name: Validar variavel obrigatoria
+      ansible.builtin.assert:
+        that:
+          - host_ip | length > 0
+        fail_msg: "A variavel host_ip e obrigatoria"
+        quiet: true
+      tags:
+        - dns
+        - ipam
+        - validate
+
+    # ── Resolver hostname via DNS reverso ────────────────────────────────────
+    - name: Resolver hostname via DNS reverso para {{ host_ip }}
+      ansible.builtin.command:
+        cmd: "dig -x {{ host_ip }} @{{ dns_server }} +short"
+      register: dig_reverse
+      changed_when: false
+      failed_when: false
+      tags:
+        - dns
+
+    - name: Registrar hostname resolvido
+      ansible.builtin.set_fact:
+        _resolved_name: "{{ dig_reverse.stdout | trim | regex_replace('\\.$', '') }}"
+      tags:
+        - dns
+
+    - name: Definir FQDN do host
+      ansible.builtin.set_fact:
+        _fqdn: "{{ _resolved_name if _resolved_name | length > 0 else host_name.split('.')[0] ~ '.' ~ host_domain }}"
+        _short_name: "{{ _resolved_name.split('.')[0] if _resolved_name | length > 0 else host_name.split('.')[0] }}"
+      tags:
+        - dns
+
+    - name: Exibir resolucao
+      ansible.builtin.debug:
+        msg: "IP {{ host_ip }} → {{ _fqdn }} (short: {{ _short_name }})"
+      tags:
+        - dns
+
+    # ── Remover registro A do DNS ────────────────────────────────────────────
+    - name: Remover registro A de {{ _short_name }} do DNS
+      community.general.nsupdate:
+        server: "{{ dns_server }}"
+        zone: "{{ dns_zone }}"
+        record: "{{ _short_name }}"
+        type: A
+        value: "{{ host_ip }}"
+        ttl: 300
+        key_name: "{{ dns_key_name }}"
+        key_secret: "{{ dns_key_secret }}"
+        key_algorithm: "{{ dns_key_algorithm }}"
+        state: absent
+      when: _short_name | length > 0
+      tags:
+        - dns
+        - registro_a
+
+    # ── Remover registro PTR do DNS ──────────────────────────────────────────
+    - name: Remover registro PTR de {{ host_ip }} do DNS reverso
+      community.general.nsupdate:
+        server: "{{ dns_server }}"
+        zone: "{{ dns_reverse_zone }}"
+        record: "{{ host_ip.split('.')[-1] }}.{{ dns_reverse_zone }}"
+        type: PTR
+        value: "{{ _short_name }}"
+        ttl: 300
+        key_name: "{{ dns_key_name }}"
+        key_secret: "{{ dns_key_secret }}"
+        key_algorithm: "{{ dns_key_algorithm }}"
+        state: absent
+      tags:
+        - dns
+        - registro_ptr
+
+    # ── Remover IP do IPAM (NetBox) ──────────────────────────────────────────
+    - name: Remover IP {{ host_ip }} do IPAM
+      netbox.netbox.netbox_ip_address:
+        netbox_url: "{{ netbox_url }}"
+        netbox_token: "{{ netbox_token }}"
+        data:
+          address: "{{ host_ip }}/{{ net_cidr }}"
+        state: absent
+        validate_certs: false
+      when:
+        - netbox_url | length > 0
+        - netbox_token | length > 0
+      tags:
+        - ipam
+
+    # ── Resumo ───────────────────────────────────────────────────────────────
+    - name: Exibir resumo
+      ansible.builtin.debug:
+        msg:
+          - "================================================"
+          - " Registros de rede removidos"
+          - "================================================"
+          - " IP         : {{ host_ip }}"
+          - " Hostname   : {{ _fqdn }}"
+          - " DNS A      : removido"
+          - " DNS PTR    : removido"
+          - " IPAM       : {{ 'removido' if (netbox_url | length > 0) else 'ignorado (sem credencial)' }}"
+          - "================================================"
+      tags:
+        - dns
+        - ipam
+
+    - name: Exportar dados para proximo job template
+      ansible.builtin.set_stats:
+        data:
+          host_ip: "{{ host_ip }}"
+          host_name: "{{ _short_name }}"
+          host_fqdn: "{{ _fqdn }}"
+          network_decommissioned: true
+          sn_short_description: "Decommissioned network for {{ _fqdn }} ({{ host_ip }})"
+      tags:
+        - dns
+        - ipam
+        - export
