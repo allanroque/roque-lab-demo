@@ -1,8 +1,8 @@
 ---
 # =============================================================================
 # Playbook: Adicionar host ao inventario do AAP
-# Descricao: Cria o host no inventario INV-ROQUE-LAB, cria o grupo se nao existir,
-#            e associa o host ao grupo baseado em host_role
+# Descricao: Cria o host no inventario INV-ROQUE-LAB, cria grupos se necessario,
+#            e associa o host aos grupos baseado em host_role e host_group
 #
 # Variaveis para Survey do AAP (ou recebidas via set_stats do workflow):
 #   host_name        - Nome curto do host (ex: server10) [obrigatorio]
@@ -10,13 +10,13 @@
 #   host_ip          - IP do host (ex: 192.168.100.50) [obrigatorio]
 #   host_description - Descricao do host (default: Provisioned by Ansible)
 #   host_role        - Role/funcao — define o grupo (webserver | database | app | bastion)
-#   host_group       - Grupo logico (lab | prod | staging)
+#   host_group       - Grupo logico (lab | prod | staging | infra)
 #   host_env         - Ambiente (lab | dev | staging | production)
 #   host_cpu         - vCPUs (informativo, salvo como host var)
 #   host_memory      - RAM em MB (informativo, salvo como host var)
 #   host_disk        - Disco em GB (informativo, salvo como host var)
 #
-# Credenciais: Red Hat Ansible Automation Platform (tipo nativo)
+# Credenciais: Red Hat Ansible Automation Platform (tipo nativo, id: 16)
 #   Injeta: controller_host, controller_username, controller_password
 # =============================================================================
 - name: Adicionar host ao inventario do AAP
@@ -31,10 +31,11 @@
     host_role: "webserver"
     host_group: "lab"
     host_env: "lab"
-    host_cpu: ""
-    host_memory: ""
+    host_cpu: "{{ host_cpus | default(2) }}"
+    host_memory: "{{ host_memory_mb | default(2048) }}"
     host_disk: ""
     aap_inventory: "INV-ROQUE-LAB"
+    aap_base_url: "https://{{ controller_host }}/api/v2"
 
   tasks:
     # ── Validacao ────────────────────────────────────────────────────────────
@@ -56,50 +57,185 @@
         - provisioning
         - inventory
 
-    # ── Criar grupo baseado em host_role ─────────────────────────────────────
-    - name: Garantir que grupo {{ host_role }} existe no inventario
-      awx.awx.group:
-        name: "{{ host_role }}"
-        inventory: "{{ aap_inventory }}"
-        description: "Grupo {{ host_role }} — criado automaticamente"
-        preserve_existing_hosts: true
-        state: present
+    # ── Obter ID do inventario ───────────────────────────────────────────────
+    - name: Obter inventario {{ aap_inventory }}
+      ansible.builtin.uri:
+        url: "{{ aap_base_url }}/inventories/?name={{ aap_inventory | urlencode }}"
+        method: GET
+        url_username: "{{ controller_username }}"
+        url_password: "{{ controller_password }}"
+        force_basic_auth: true
         validate_certs: false
+        return_content: true
+      register: inv_result
+      tags:
+        - provisioning
+        - inventory
+
+    - name: Validar inventario encontrado
+      ansible.builtin.assert:
+        that:
+          - inv_result.json.count > 0
+        fail_msg: "Inventario '{{ aap_inventory }}' nao encontrado no AAP"
+        quiet: true
+      tags:
+        - provisioning
+        - inventory
+
+    - name: Registrar ID do inventario
+      ansible.builtin.set_fact:
+        inv_id: "{{ inv_result.json.results[0].id }}"
+      tags:
+        - provisioning
+        - inventory
+
+    # ── Criar grupos ─────────────────────────────────────────────────────────
+    - name: Garantir que grupo {{ host_role }} existe
+      ansible.builtin.uri:
+        url: "{{ aap_base_url }}/inventories/{{ inv_id }}/groups/"
+        method: POST
+        url_username: "{{ controller_username }}"
+        url_password: "{{ controller_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        body_format: json
+        body:
+          name: "{{ host_role }}"
+          description: "Grupo {{ host_role }} — criado automaticamente"
+        status_code:
+          - 200
+          - 201
+          - 400
+        return_content: true
+      register: group_role_result
       tags:
         - provisioning
         - inventory
         - group
 
-    - name: Garantir que grupo {{ host_group }} existe no inventario
-      awx.awx.group:
-        name: "{{ host_group }}"
-        inventory: "{{ aap_inventory }}"
-        description: "Grupo {{ host_group }} — criado automaticamente"
-        preserve_existing_hosts: true
-        state: present
+    - name: Garantir que grupo {{ host_group }} existe
+      ansible.builtin.uri:
+        url: "{{ aap_base_url }}/inventories/{{ inv_id }}/groups/"
+        method: POST
+        url_username: "{{ controller_username }}"
+        url_password: "{{ controller_password }}"
+        force_basic_auth: true
         validate_certs: false
+        body_format: json
+        body:
+          name: "{{ host_group }}"
+          description: "Grupo {{ host_group }} — criado automaticamente"
+        status_code:
+          - 200
+          - 201
+          - 400
+        return_content: true
+      register: group_env_result
       tags:
         - provisioning
         - inventory
         - group
 
-    # ── Criar host no inventario ─────────────────────────────────────────────
-    - name: Adicionar host {{ host_fqdn }} ao inventario {{ aap_inventory }}
-      awx.awx.host:
-        name: "{{ host_fqdn }}"
-        inventory: "{{ aap_inventory }}"
-        description: "{{ host_description }}"
-        enabled: true
-        state: present
+    # ── Obter IDs dos grupos ─────────────────────────────────────────────────
+    - name: Obter ID do grupo {{ host_role }}
+      ansible.builtin.uri:
+        url: "{{ aap_base_url }}/inventories/{{ inv_id }}/groups/?name={{ host_role | urlencode }}"
+        method: GET
+        url_username: "{{ controller_username }}"
+        url_password: "{{ controller_password }}"
+        force_basic_auth: true
         validate_certs: false
-        variables:
-          ansible_host: "{{ host_ip }}"
-          host_role: "{{ host_role }}"
-          host_group: "{{ host_group }}"
-          host_env: "{{ host_env }}"
-          host_cpu: "{{ host_cpu }}"
-          host_memory: "{{ host_memory }}"
-          host_disk: "{{ host_disk }}"
+        return_content: true
+      register: group_role_info
+      tags:
+        - provisioning
+        - inventory
+
+    - name: Obter ID do grupo {{ host_group }}
+      ansible.builtin.uri:
+        url: "{{ aap_base_url }}/inventories/{{ inv_id }}/groups/?name={{ host_group | urlencode }}"
+        method: GET
+        url_username: "{{ controller_username }}"
+        url_password: "{{ controller_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        return_content: true
+      register: group_env_info
+      tags:
+        - provisioning
+        - inventory
+
+    - name: Registrar IDs dos grupos
+      ansible.builtin.set_fact:
+        group_role_id: "{{ group_role_info.json.results[0].id }}"
+        group_env_id: "{{ group_env_info.json.results[0].id }}"
+      tags:
+        - provisioning
+        - inventory
+
+    # ── Criar host ───────────────────────────────────────────────────────────
+    - name: Criar host {{ host_fqdn }} no inventario
+      ansible.builtin.uri:
+        url: "{{ aap_base_url }}/inventories/{{ inv_id }}/hosts/"
+        method: POST
+        url_username: "{{ controller_username }}"
+        url_password: "{{ controller_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        body_format: json
+        body:
+          name: "{{ host_fqdn }}"
+          description: "{{ host_description }}"
+          enabled: true
+          variables: "{{ {'ansible_host': host_ip, 'host_role': host_role, 'host_group': host_group, 'host_env': host_env, 'host_cpu': host_cpu, 'host_memory': host_memory, 'host_disk': host_disk} | to_yaml }}"
+        status_code:
+          - 200
+          - 201
+          - 400
+        return_content: true
+      register: host_result
+      tags:
+        - provisioning
+        - inventory
+        - host
+
+    # ── Obter ID do host ─────────────────────────────────────────────────────
+    - name: Obter ID do host {{ host_fqdn }}
+      ansible.builtin.uri:
+        url: "{{ aap_base_url }}/inventories/{{ inv_id }}/hosts/?name={{ host_fqdn | urlencode }}"
+        method: GET
+        url_username: "{{ controller_username }}"
+        url_password: "{{ controller_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        return_content: true
+      register: host_info
+      tags:
+        - provisioning
+        - inventory
+
+    - name: Registrar ID do host
+      ansible.builtin.set_fact:
+        aap_host_id: "{{ host_info.json.results[0].id }}"
+      tags:
+        - provisioning
+        - inventory
+
+    # ── Garantir host habilitado ─────────────────────────────────────────────
+    - name: Garantir que host esta habilitado
+      ansible.builtin.uri:
+        url: "{{ aap_base_url }}/hosts/{{ aap_host_id }}/"
+        method: PATCH
+        url_username: "{{ controller_username }}"
+        url_password: "{{ controller_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        body_format: json
+        body:
+          enabled: true
+        status_code:
+          - 200
+        return_content: true
       tags:
         - provisioning
         - inventory
@@ -107,28 +243,42 @@
 
     # ── Associar host aos grupos ─────────────────────────────────────────────
     - name: Associar {{ host_fqdn }} ao grupo {{ host_role }}
-      awx.awx.group:
-        name: "{{ host_role }}"
-        inventory: "{{ aap_inventory }}"
-        hosts:
-          - "{{ host_fqdn }}"
-        preserve_existing_hosts: true
-        state: present
+      ansible.builtin.uri:
+        url: "{{ aap_base_url }}/groups/{{ group_role_id }}/hosts/"
+        method: POST
+        url_username: "{{ controller_username }}"
+        url_password: "{{ controller_password }}"
+        force_basic_auth: true
         validate_certs: false
+        body_format: json
+        body:
+          id: "{{ aap_host_id | int }}"
+        status_code:
+          - 200
+          - 204
+          - 400
+        return_content: true
       tags:
         - provisioning
         - inventory
         - group
 
     - name: Associar {{ host_fqdn }} ao grupo {{ host_group }}
-      awx.awx.group:
-        name: "{{ host_group }}"
-        inventory: "{{ aap_inventory }}"
-        hosts:
-          - "{{ host_fqdn }}"
-        preserve_existing_hosts: true
-        state: present
+      ansible.builtin.uri:
+        url: "{{ aap_base_url }}/groups/{{ group_env_id }}/hosts/"
+        method: POST
+        url_username: "{{ controller_username }}"
+        url_password: "{{ controller_password }}"
+        force_basic_auth: true
         validate_certs: false
+        body_format: json
+        body:
+          id: "{{ aap_host_id | int }}"
+        status_code:
+          - 200
+          - 204
+          - 400
+        return_content: true
       tags:
         - provisioning
         - inventory
@@ -143,7 +293,8 @@
           - "================================================"
           - " Host       : {{ host_fqdn }}"
           - " IP         : {{ host_ip }}"
-          - " Inventario : {{ aap_inventory }}"
+          - " Host ID    : {{ aap_host_id }}"
+          - " Inventario : {{ aap_inventory }} (id: {{ inv_id }})"
           - " Grupos     : {{ host_role }}, {{ host_group }}"
           - " Enabled    : true"
           - "================================================"
@@ -161,6 +312,7 @@
           host_group: "{{ host_group }}"
           host_env: "{{ host_env }}"
           aap_inventory: "{{ aap_inventory }}"
+          aap_host_id: "{{ aap_host_id }}"
           inventory_host_added: true
       tags:
         - provisioning
