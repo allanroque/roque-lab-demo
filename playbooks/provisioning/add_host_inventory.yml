@@ -1,0 +1,168 @@
+---
+# =============================================================================
+# Playbook: Adicionar host ao inventario do AAP
+# Descricao: Cria o host no inventario INV-ROQUE-LAB, cria o grupo se nao existir,
+#            e associa o host ao grupo baseado em host_role
+#
+# Variaveis para Survey do AAP (ou recebidas via set_stats do workflow):
+#   host_name        - Nome curto do host (ex: server10) [obrigatorio]
+#   host_domain      - Dominio do host (default: aroque.com.br)
+#   host_ip          - IP do host (ex: 192.168.100.50) [obrigatorio]
+#   host_description - Descricao do host (default: Provisioned by Ansible)
+#   host_role        - Role/funcao — define o grupo (webserver | database | app | bastion)
+#   host_group       - Grupo logico (lab | prod | staging)
+#   host_env         - Ambiente (lab | dev | staging | production)
+#   host_cpu         - vCPUs (informativo, salvo como host var)
+#   host_memory      - RAM em MB (informativo, salvo como host var)
+#   host_disk        - Disco em GB (informativo, salvo como host var)
+#
+# Credenciais: Red Hat Ansible Automation Platform (tipo nativo)
+#   Injeta: controller_host, controller_username, controller_password
+# =============================================================================
+- name: Adicionar host ao inventario do AAP
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    host_name: ""
+    host_domain: "aroque.com.br"
+    host_ip: ""
+    host_description: "Provisioned by Ansible"
+    host_role: "webserver"
+    host_group: "lab"
+    host_env: "lab"
+    host_cpu: ""
+    host_memory: ""
+    host_disk: ""
+    aap_inventory: "INV-ROQUE-LAB"
+
+  tasks:
+    # ── Validacao ────────────────────────────────────────────────────────────
+    - name: Validar variaveis obrigatorias
+      ansible.builtin.assert:
+        that:
+          - host_name | length > 0
+          - host_ip | length > 0
+        fail_msg: "As variaveis host_name e host_ip sao obrigatorias"
+        quiet: true
+      tags:
+        - provisioning
+        - inventory
+
+    - name: Construir FQDN do host
+      ansible.builtin.set_fact:
+        host_fqdn: "{{ host_name.split('.')[0] }}.{{ host_domain }}"
+      tags:
+        - provisioning
+        - inventory
+
+    # ── Criar grupo baseado em host_role ─────────────────────────────────────
+    - name: Garantir que grupo {{ host_role }} existe no inventario
+      awx.awx.group:
+        name: "{{ host_role }}"
+        inventory: "{{ aap_inventory }}"
+        description: "Grupo {{ host_role }} — criado automaticamente"
+        preserve_existing_hosts: true
+        state: present
+        validate_certs: false
+      tags:
+        - provisioning
+        - inventory
+        - group
+
+    - name: Garantir que grupo {{ host_group }} existe no inventario
+      awx.awx.group:
+        name: "{{ host_group }}"
+        inventory: "{{ aap_inventory }}"
+        description: "Grupo {{ host_group }} — criado automaticamente"
+        preserve_existing_hosts: true
+        state: present
+        validate_certs: false
+      tags:
+        - provisioning
+        - inventory
+        - group
+
+    # ── Criar host no inventario ─────────────────────────────────────────────
+    - name: Adicionar host {{ host_fqdn }} ao inventario {{ aap_inventory }}
+      awx.awx.host:
+        name: "{{ host_fqdn }}"
+        inventory: "{{ aap_inventory }}"
+        description: "{{ host_description }}"
+        enabled: true
+        state: present
+        validate_certs: false
+        variables:
+          ansible_host: "{{ host_ip }}"
+          host_role: "{{ host_role }}"
+          host_group: "{{ host_group }}"
+          host_env: "{{ host_env }}"
+          host_cpu: "{{ host_cpu }}"
+          host_memory: "{{ host_memory }}"
+          host_disk: "{{ host_disk }}"
+      tags:
+        - provisioning
+        - inventory
+        - host
+
+    # ── Associar host aos grupos ─────────────────────────────────────────────
+    - name: Associar {{ host_fqdn }} ao grupo {{ host_role }}
+      awx.awx.group:
+        name: "{{ host_role }}"
+        inventory: "{{ aap_inventory }}"
+        hosts:
+          - "{{ host_fqdn }}"
+        preserve_existing_hosts: true
+        state: present
+        validate_certs: false
+      tags:
+        - provisioning
+        - inventory
+        - group
+
+    - name: Associar {{ host_fqdn }} ao grupo {{ host_group }}
+      awx.awx.group:
+        name: "{{ host_group }}"
+        inventory: "{{ aap_inventory }}"
+        hosts:
+          - "{{ host_fqdn }}"
+        preserve_existing_hosts: true
+        state: present
+        validate_certs: false
+      tags:
+        - provisioning
+        - inventory
+        - group
+
+    # ── Resumo ───────────────────────────────────────────────────────────────
+    - name: Exibir resumo
+      ansible.builtin.debug:
+        msg:
+          - "================================================"
+          - " Host adicionado ao inventario AAP"
+          - "================================================"
+          - " Host       : {{ host_fqdn }}"
+          - " IP         : {{ host_ip }}"
+          - " Inventario : {{ aap_inventory }}"
+          - " Grupos     : {{ host_role }}, {{ host_group }}"
+          - " Enabled    : true"
+          - "================================================"
+      tags:
+        - provisioning
+        - inventory
+
+    - name: Exportar dados para proximo job template
+      ansible.builtin.set_stats:
+        data:
+          host_name: "{{ host_name }}"
+          host_fqdn: "{{ host_fqdn }}"
+          host_ip: "{{ host_ip }}"
+          host_role: "{{ host_role }}"
+          host_group: "{{ host_group }}"
+          host_env: "{{ host_env }}"
+          aap_inventory: "{{ aap_inventory }}"
+          inventory_host_added: true
+      tags:
+        - provisioning
+        - inventory
+        - export

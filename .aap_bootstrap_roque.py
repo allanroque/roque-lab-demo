@@ -509,6 +509,11 @@ def main():
         jt_by_name,
         ["LINUX-HARDENING", "LINUX-CONFIG-PACKAGES", "LINUX-CONFIG-CHRONY", "LINUX-CONFIG-MOTD"],
     )
+    create_workflow(
+        "WF-PROVISION-LOCAL-VM",
+        jt_by_name,
+        ["PROVISION-VM-LOCAL"],
+    )
     print("Done.")
 
 

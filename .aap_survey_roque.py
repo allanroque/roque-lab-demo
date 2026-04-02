@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Aplica surveys nos Job Templates ROQUE alinhados ao padrão SRE (DNS, IPAM, SNOW, ADHOC).
+Aplica surveys em Job Templates e Workflow Job Templates ROQUE (DNS, IPAM, SNOW, provisioning).
 Requer AAP_ADMIN_TOKEN ou token admin no .mcp.json (linha Bearer b4td…).
 """
 import json
@@ -92,6 +92,97 @@ def q_integer(var, qname, desc="", default=0, required=False, min_v=0, max_v=999
         "question_name": qname,
         "question_description": desc,
     }
+
+
+# Mesmo survey para JT PROVISION-VM-LOCAL e workflow WF-PROVISION-LOCAL-VM (variáveis → provision_vm.yml)
+PROVISION_VM_LOCAL_SURVEY_SPEC = {
+    "name": "",
+    "description": "Provisionar VM VMware Fusion local — alinhado ao survey do workflow",
+    "spec": [
+        q_text(
+            "host_name",
+            "Nome do host (curto)",
+            "Ex: server03 (sem FQDN)",
+            "server1",
+            True,
+            128,
+        ),
+        q_text(
+            "host_ip",
+            "IP do host",
+            "Ex: 192.168.100.50",
+            "192.168.100.50",
+            True,
+            40,
+        ),
+        q_text(
+            "host_domain",
+            "Domínio DNS",
+            "Sufixo FQDN",
+            "aroque.com.br",
+            False,
+            128,
+        ),
+        q_text(
+            "host_description",
+            "Descrição",
+            "Inventário / CMDB",
+            "Provisioned by Ansible",
+            False,
+            512,
+        ),
+        q_integer(
+            "host_cpus",
+            "vCPUs (metadado / futuro)",
+            "Configura VM via vmrest; exporta valor confirmado pela API (CMDB)",
+            2,
+            False,
+            1,
+            64,
+        ),
+        q_integer(
+            "host_memory_mb",
+            "RAM MB (metadado / futuro)",
+            "RAM em MB — vmrest + CMDB",
+            2048,
+            False,
+            512,
+            262144,
+        ),
+        q_text(
+            "host_disk",
+            "Disco (metadado / futuro)",
+            "Informativo CMDB (vmrest não altera disco)",
+            "20",
+            False,
+            64,
+        ),
+        q_multi(
+            "host_role",
+            "Função (role)",
+            ["webserver", "database", "app", "bastion"],
+            "Papel do servidor",
+            "webserver",
+            False,
+        ),
+        q_multi(
+            "host_group",
+            "Grupo",
+            ["lab", "prod", "staging", "infra"],
+            "Grupo lógico",
+            "infra",
+            False,
+        ),
+        q_multi(
+            "host_env",
+            "Ambiente",
+            ["lab", "dev", "staging", "production"],
+            "Ambiente",
+            "lab",
+            False,
+        ),
+    ],
+}
 
 
 # (jt_name, survey_body) — body = {"name":"","description":"","spec":[...]}
@@ -417,97 +508,7 @@ SURVEYS = [
             ],
         },
     ),
-    (
-        "PROVISION-VM-LOCAL",
-        {
-            "name": "",
-            "description": "provision_vm.yml — VMware Fusion local (vmrest); credenciais vmrest no JT",
-            "spec": [
-                q_text(
-                    "host_name",
-                    "Nome do host (curto)",
-                    "Ex: server03 (sem FQDN)",
-                    "",
-                    True,
-                    128,
-                ),
-                q_text(
-                    "host_ip",
-                    "IP do host",
-                    "Ex: 192.168.100.50",
-                    "",
-                    True,
-                    40,
-                ),
-                q_text(
-                    "host_domain",
-                    "Domínio DNS",
-                    "Sufixo FQDN",
-                    "aroque.com.br",
-                    False,
-                    128,
-                ),
-                q_text(
-                    "host_description",
-                    "Descrição",
-                    "Inventário / CMDB",
-                    "Provisioned by Ansible",
-                    False,
-                    512,
-                ),
-                q_integer(
-                    "host_cpus",
-                    "vCPUs",
-                    "Configura a VM (vmrest) e exporta valor confirmado pela API (CMDB)",
-                    2,
-                    False,
-                    1,
-                    64,
-                ),
-                q_integer(
-                    "host_memory_mb",
-                    "RAM (MB)",
-                    "Configura a VM (vmrest) e exporta valor confirmado pela API (CMDB)",
-                    2048,
-                    False,
-                    512,
-                    262144,
-                ),
-                q_text(
-                    "host_disk",
-                    "Disco (informativo)",
-                    "CMDB — vmrest não altera disco; ex: 40GB",
-                    "",
-                    False,
-                    64,
-                ),
-                q_multi(
-                    "host_role",
-                    "Função (role)",
-                    ["webserver", "database", "app", "bastion"],
-                    "Papel do servidor",
-                    "webserver",
-                    False,
-                ),
-                q_multi(
-                    "host_group",
-                    "Grupo",
-                    ["lab", "prod", "staging"],
-                    "Grupo lógico",
-                    "lab",
-                    False,
-                ),
-                q_multi(
-                    "host_env",
-                    "Ambiente",
-                    ["lab", "dev", "staging", "production"],
-                    "Ambiente",
-                    "lab",
-                    False,
-                ),
-            ],
-        },
-    ),
+    ("PROVISION-VM-LOCAL", PROVISION_VM_LOCAL_SURVEY_SPEC),
     (
         "DESTROY-VM-LOCAL",
         {
@@ -535,6 +536,11 @@ SURVEYS = [
     ),
 ]
 
+# (workflow_job_template_name, survey_body) — mesmo spec que PROVISION-VM-LOCAL
+WORKFLOW_SURVEYS = [
+    ("WF-PROVISION-LOCAL-VM", PROVISION_VM_LOCAL_SURVEY_SPEC),
+]
+
 
 def project_id():
     r = api("GET", f"/projects/?organization=15&search={ORG_ROQUE_PROJECT}")
@@ -555,6 +561,19 @@ def apply_survey(jtid, body):
     api("PATCH", f"/job_templates/{jtid}/", {"survey_enabled": True})
 
 
+def wf_id_by_name(name: str):
+    r = api("GET", f"/workflow_job_templates/?organization=15&search={name.replace(' ', '+')}")
+    for row in r.get("results", []):
+        if row.get("name") == name:
+            return row["id"]
+    return None
+
+
+def apply_workflow_survey(wfid: int, body: dict):
+    api("POST", f"/workflow_job_templates/{wfid}/survey_spec/", body)
+    api("PATCH", f"/workflow_job_templates/{wfid}/", {"survey_enabled": True})
+
+
 def main():
     pid = project_id()
     for jt_name, survey in SURVEYS:
@@ -564,6 +583,13 @@ def main():
             continue
         apply_survey(jid, survey)
         print(f"OK survey: {jt_name} (JT id={jid})")
+    for wf_name, survey in WORKFLOW_SURVEYS:
+        wfid = wf_id_by_name(wf_name)
+        if not wfid:
+            print(f"SKIP workflow (não encontrado): {wf_name}", file=sys.stderr)
+            continue
+        apply_workflow_survey(wfid, survey)
+        print(f"OK survey workflow: {wf_name} (WF id={wfid})")
     print("Concluído.")
 
 
