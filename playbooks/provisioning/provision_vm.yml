@@ -37,8 +37,8 @@
     host_role: "webserver"
     host_group: "lab"
     host_env: "lab"
-    host_cpu: 2
-    host_memory: 2048
+    host_cpu: "{{ host_cpus | default(2) }}"
+    host_memory: "{{ host_memory_mb | default(2048) }}"
     host_disk: "20"
     vm_ssh_user: "ansible"
     vm_ssh_pass: ""
