@@ -1,0 +1,186 @@
+---
+# =============================================================================
+# Playbook: Ajustar horario e registrar host no RHSM (Red Hat Subscription Manager)
+# Descricao: Consulta horario de referencia, sincroniza relogio e registra no RHSM
+#
+# Variaveis para Survey do AAP:
+#   rhsm_username    - Usuario Red Hat (campo text) [obrigatorio]
+#   rhsm_password    - Senha Red Hat (campo password) [obrigatorio]
+#   host_timezone    - Timezone do servidor (default: America/Sao_Paulo)
+# =============================================================================
+- name: Ajustar horario e registrar host no RHSM
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    rhsm_username: ""
+    rhsm_password: ""
+    host_timezone: "America/Sao_Paulo"
+
+  tasks:
+    # ── Validacao ────────────────────────────────────────────────────────────
+    - name: Validar variaveis obrigatorias
+      ansible.builtin.assert:
+        that:
+          - rhsm_username | length > 0
+          - rhsm_password | length > 0
+        fail_msg: "As variaveis rhsm_username e rhsm_password sao obrigatorias"
+        quiet: true
+      tags:
+        - linux
+        - rhsm
+        - validate
+
+    # ── Fase 1: Coletar horario de referencia ────────────────────────────────
+    - name: Exibir horario atual do servidor (antes do ajuste)
+      ansible.builtin.debug:
+        msg: "Horario atual: {{ ansible_date_time.iso8601 }} | TZ: {{ ansible_date_time.tz }}"
+      tags:
+        - linux
+        - ntp
+
+    - name: Consultar horario de referencia via WorldTimeAPI
+      ansible.builtin.uri:
+        url: "http://worldtimeapi.org/api/timezone/{{ host_timezone }}"
+        method: GET
+        return_content: true
+        timeout: 10
+      register: time_api
+      delegate_to: localhost
+      become: false
+      tags:
+        - linux
+        - ntp
+
+    - name: Registrar horario de referencia
+      ansible.builtin.set_fact:
+        ref_datetime: "{{ time_api.json.datetime }}"
+        ref_utc_offset: "{{ time_api.json.utc_offset }}"
+      tags:
+        - linux
+        - ntp
+
+    - name: Exibir horario de referencia
+      ansible.builtin.debug:
+        msg: "Referencia: {{ ref_datetime }} (UTC{{ ref_utc_offset }})"
+      tags:
+        - linux
+        - ntp
+
+    # ── Fase 2: Ajustar horario do servidor ──────────────────────────────────
+    - name: Configurar timezone {{ host_timezone }}
+      ansible.builtin.command:
+        cmd: "timedatectl set-timezone {{ host_timezone }}"
+      changed_when: true
+      tags:
+        - linux
+        - ntp
+
+    - name: Parar servico chronyd para ajuste manual
+      ansible.builtin.systemd:
+        name: chronyd
+        state: stopped
+      failed_when: false
+      tags:
+        - linux
+        - ntp
+
+    - name: Sincronizar relogio com horario de referencia
+      ansible.builtin.command:
+        cmd: "date -s '{{ ref_datetime[:19] }}'"
+      changed_when: true
+      tags:
+        - linux
+        - ntp
+
+    - name: Sincronizar relogio de hardware
+      ansible.builtin.command:
+        cmd: "hwclock --systohc"
+      changed_when: true
+      tags:
+        - linux
+        - ntp
+
+    - name: Iniciar e habilitar chronyd para sincronizacao continua
+      ansible.builtin.systemd:
+        name: chronyd
+        state: started
+        enabled: true
+      failed_when: false
+      tags:
+        - linux
+        - ntp
+
+    - name: Verificar horario ajustado
+      ansible.builtin.command:
+        cmd: "date '+%Y-%m-%d %H:%M:%S %Z'"
+      register: date_after
+      changed_when: false
+      tags:
+        - linux
+        - ntp
+
+    - name: Exibir horario apos ajuste
+      ansible.builtin.debug:
+        msg: "Horario ajustado: {{ date_after.stdout }}"
+      tags:
+        - linux
+        - ntp
+
+    # ── Fase 3: Registrar no RHSM ───────────────────────────────────────────
+    - name: Verificar se ja esta registrado no RHSM
+      ansible.builtin.command:
+        cmd: "subscription-manager identity"
+      register: rhsm_identity
+      failed_when: false
+      changed_when: false
+      tags:
+        - linux
+        - rhsm
+
+    - name: Registrar host no Red Hat Subscription Manager
+      community.general.redhat_subscription:
+        username: "{{ rhsm_username }}"
+        password: "{{ rhsm_password }}"
+        auto_attach: true
+        force_register: true
+        state: present
+      no_log: true
+      tags:
+        - linux
+        - rhsm
+
+    - name: Verificar status do registro
+      ansible.builtin.command:
+        cmd: "subscription-manager identity"
+      register: rhsm_status
+      changed_when: false
+      tags:
+        - linux
+        - rhsm
+
+    - name: Verificar subscriptions ativas
+      ansible.builtin.command:
+        cmd: "subscription-manager list --consumed"
+      register: rhsm_subs
+      changed_when: false
+      tags:
+        - linux
+        - rhsm
+
+    # ── Resumo ───────────────────────────────────────────────────────────────
+    - name: Exibir resumo
+      ansible.builtin.debug:
+        msg:
+          - "================================================"
+          - " Host registrado no RHSM"
+          - "================================================"
+          - " Host       : {{ ansible_fqdn }}"
+          - " Timezone   : {{ host_timezone }}"
+          - " Horario    : {{ date_after.stdout }}"
+          - " RHSM ID   : {{ rhsm_status.stdout_lines[0] | default('N/A') }}"
+          - "================================================"
+      tags:
+        - linux
+        - rhsm
