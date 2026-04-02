@@ -38,7 +38,7 @@
     aap_host: "{{ controller_host | default(lookup('env', 'CONTROLLER_HOST')) }}"
     aap_user: "{{ controller_username | default(lookup('env', 'CONTROLLER_USERNAME')) }}"
     aap_pass: "{{ controller_password | default(lookup('env', 'CONTROLLER_PASSWORD')) }}"
-    aap_base_url: "{{ (aap_host if aap_host.startswith('http') else 'https://' ~ aap_host) | regex_replace('/$', '') }}/api/v2"
+    aap_base_url: "{{ (aap_host if aap_host.startswith('http') else 'https://' ~ aap_host) | regex_replace('/$', '') }}/api/controller/v2"
 
   tasks:
     # ── Validacao ────────────────────────────────────────────────────────────
