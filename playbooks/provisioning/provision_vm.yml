@@ -137,6 +137,59 @@
         - provisioning
         - vmware
 
+    # ── Garantir VM desligada para configuracao ─────────────────────────────
+    - name: Verificar estado da VM antes de configurar
+      ansible.builtin.uri:
+        url: "{{ vmrest_base_url }}/vms/{{ vm_id }}/power"
+        method: GET
+        url_username: "{{ vmrest_user }}"
+        url_password: "{{ vmrest_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: vm_pre_config_state
+      tags:
+        - provisioning
+        - vmware
+        - config
+
+    - name: Desligar VM para aplicar configuracao de recursos
+      ansible.builtin.uri:
+        url: "{{ vmrest_base_url }}/vms/{{ vm_id }}/power"
+        method: PUT
+        url_username: "{{ vmrest_user }}"
+        url_password: "{{ vmrest_password }}"
+        force_basic_auth: true
+        headers:
+          Content-Type: "{{ vmrest_content_type }}"
+        body: "off"
+        status_code:
+          - 200
+          - 201
+        return_content: true
+      when: vm_pre_config_state.json.power_state | default('') != 'poweredOff'
+      tags:
+        - provisioning
+        - vmware
+        - config
+
+    - name: Aguardar VM desligar completamente
+      ansible.builtin.uri:
+        url: "{{ vmrest_base_url }}/vms/{{ vm_id }}/power"
+        method: GET
+        url_username: "{{ vmrest_user }}"
+        url_password: "{{ vmrest_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: vm_off_check
+      until: vm_off_check.json.power_state | default('') == 'poweredOff'
+      retries: 12
+      delay: 5
+      when: vm_pre_config_state.json.power_state | default('') != 'poweredOff'
+      tags:
+        - provisioning
+        - vmware
+        - config
+
     # ── Configurar recursos da VM ────────────────────────────────────────────
     - name: Configurar vCPUs ({{ host_cpu }}) e memoria ({{ host_memory }} MB)
       ansible.builtin.uri:
