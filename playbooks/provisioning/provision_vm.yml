@@ -409,6 +409,11 @@
   hosts: localhost
   gather_facts: false
 
+  vars:
+    _cpu: "{{ host_cpus | default(host_cpu | default(2)) }}"
+    _mem: "{{ host_memory_mb | default(host_memory | default(2048)) }}"
+    _fqdn: "{{ host_name.split('.')[0] }}.{{ host_domain }}"
+
   tasks:
     - name: Registrar timestamp
       ansible.builtin.set_fact:
@@ -424,7 +429,7 @@
           - " VM Provisionada com Sucesso"
           - "================================================"
           - " Servidor"
-          - "   FQDN        : {{ host_fqdn }}"
+          - "   FQDN        : {{ _fqdn }}"
           - "   IP           : {{ host_ip }}"
           - "   Role         : {{ host_role }}"
           - "   Group        : {{ host_group }}"
@@ -432,8 +437,8 @@
           - "   Descricao    : {{ host_description }}"
           - "------------------------------------------------"
           - " Recursos"
-          - "   vCPUs        : {{ host_cpu }}"
-          - "   RAM          : {{ host_memory }} MB"
+          - "   vCPUs        : {{ _cpu }}"
+          - "   RAM          : {{ _mem }} MB"
           - "   Disk         : {{ host_disk }} GB"
           - "------------------------------------------------"
           - " VM"
@@ -452,15 +457,15 @@
       ansible.builtin.set_stats:
         data:
           host_name: "{{ host_name }}"
-          host_fqdn: "{{ host_fqdn }}"
+          host_fqdn: "{{ _fqdn }}"
           host_domain: "{{ host_domain }}"
           host_ip: "{{ host_ip }}"
           host_description: "{{ host_description }}"
           host_role: "{{ host_role }}"
           host_group: "{{ host_group }}"
           host_env: "{{ host_env }}"
-          host_cpu: "{{ host_cpu }}"
-          host_memory: "{{ host_memory }}"
+          host_cpu: "{{ _cpu }}"
+          host_memory: "{{ _mem }}"
           host_disk: "{{ host_disk }}"
           vm_id: "{{ vm_id }}"
           vm_path: "{{ vm_path }}"
@@ -469,15 +474,15 @@
           provisioned_by: "ansible"
           provisioned_at: "{{ provisioned_at }}"
           sn_short_description: >-
-            Provisioned VM {{ host_fqdn }} ({{ host_ip }})
+            Provisioned VM {{ _fqdn }} ({{ host_ip }})
           sn_description: >-
-            Server: {{ host_fqdn }}
+            Server: {{ _fqdn }}
             | IP: {{ host_ip }}
             | Role: {{ host_role }}
             | Group: {{ host_group }}
             | Environment: {{ host_env }}
-            | vCPUs: {{ host_cpu }}
-            | RAM: {{ host_memory }} MB
+            | vCPUs: {{ _cpu }}
+            | RAM: {{ _mem }} MB
             | Disk: {{ host_disk }} GB
             | Platform: vmware_fusion
             | Hypervisor: {{ vmrest_host }}
