@@ -623,6 +623,23 @@ SURVEYS = [
             ],
         },
     ),
+    (
+        "LINUX-CONFIG-RHSM",
+        {
+            "name": "",
+            "description": "config_rhsm.yml — timezone (RHSM via credencial CRED-RHSM-ROQUE)",
+            "spec": [
+                q_text(
+                    "host_timezone",
+                    "Timezone",
+                    "Ex: America/Sao_Paulo",
+                    "America/Sao_Paulo",
+                    False,
+                    64,
+                ),
+            ],
+        },
+    ),
 ]
 
 # (workflow_job_template_name, survey_body) — mesmo spec que PROVISION-VM-LOCAL

@@ -281,6 +281,13 @@
         - vmware
 
     # ── Registrar VM para configuracao no Play 2 ─────────────────────────────
+    - name: Construir FQDN resolvido para Play 2
+      ansible.builtin.set_fact:
+        resolved_fqdn: "{{ host_name.split('.')[0] }}.{{ host_domain }}"
+      tags:
+        - provisioning
+        - vmware
+
     - name: Adicionar VM ao inventario temporario com credenciais SSH
       ansible.builtin.add_host:
         name: "{{ vm_boot_ip }}"
@@ -290,8 +297,8 @@
         ansible_become: true
         ansible_become_password: "{{ vm_ssh_pass }}"
         ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
-        host_fqdn: "{{ host_fqdn }}"
-        host_ip_target: "{{ host_ip }}"
+        target_fqdn: "{{ resolved_fqdn }}"
+        target_ip: "{{ host_ip }}"
       tags:
         - provisioning
         - vmware
@@ -331,9 +338,9 @@
   become: true
 
   tasks:
-    - name: Configurar hostname {{ host_fqdn }}
+    - name: Configurar hostname {{ target_fqdn }}
       ansible.builtin.hostname:
-        name: "{{ host_fqdn }}"
+        name: "{{ target_fqdn }}"
       tags:
         - provisioning
         - vmware
@@ -357,11 +364,11 @@
         - vmware
         - config
 
-    - name: "Configurar IP estatico {{ host_ip_target }}"
+    - name: "Configurar IP estatico {{ target_ip }}"
       ansible.builtin.command:
         cmd: >-
           nmcli connection modify "{{ net_connection }}"
-          ipv4.addresses "{{ host_ip_target }}/24"
+          ipv4.addresses "{{ target_ip }}/24"
           ipv4.gateway "192.168.100.1"
           ipv4.dns "192.168.100.11"
           ipv4.method manual
@@ -383,9 +390,9 @@
         - vmware
         - config
 
-    - name: Aguardar SSH no IP final {{ host_ip_target }}
+    - name: Aguardar SSH no IP final {{ target_ip }}
       ansible.builtin.wait_for:
-        host: "{{ host_ip_target }}"
+        host: "{{ target_ip }}"
         port: 22
         timeout: 120
         delay: 10

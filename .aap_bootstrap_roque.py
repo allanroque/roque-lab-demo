@@ -60,6 +60,7 @@ PLAYBOOKS = [
     ("playbooks/linux/hardening/config-chrony.yml", "LINUX-HARDENING-CHRONY", "ssh", "linux"),
     ("playbooks/linux/hardening/config_agent_virt.yml", "LINUX-CONFIG-AGENT-VIRT", "ssh", "linux"),
     ("playbooks/linux/hardening/config_vmtools.yml", "LINUX-CONFIG-VMTOOLS", "ssh", "linux"),
+    ("playbooks/linux/hardening/config_rhsm.yml", "LINUX-CONFIG-RHSM", "ssh_rhsm", "linux"),
     ("playbooks/linux/hardening/config_ansible_log.yml", "LINUX-HARDENING-ANSIBLE-LOG", "ssh", "linux"),
     ("playbooks/linux/hardening/config_basic_packages.yml", "LINUX-HARDENING-BASIC-PACKAGES", "ssh", "linux"),
     ("playbooks/linux/hardening/config_basic_services.yml", "LINUX-HARDENING-BASIC-SERVICES", "ssh", "linux"),
@@ -372,6 +373,66 @@ def credential_id_by_name(name: str):
     return r["results"][0]["id"] if r["count"] else None
 
 
+def ensure_rhsm_credential_type():
+    """Tipo customizado RHSM Subscription (injector extra_vars rhsm_username/password)."""
+    r = api("GET", f"/credential_types/?search=RHSM+Subscription&page_size=50")
+    for row in r.get("results", []):
+        if row.get("name") == "RHSM Subscription":
+            return row["id"]
+    body = {
+        "name": "RHSM Subscription",
+        "description": "Red Hat Subscription Manager (conta RHSM)",
+        "kind": "cloud",
+        "namespace": "rhsm_subscription_roque",
+        "inputs": {
+            "fields": [
+                {"id": "rhsm_username", "type": "string", "label": "RHSM Username"},
+                {"id": "rhsm_password", "type": "string", "label": "RHSM Password", "secret": True},
+            ],
+            "required": ["rhsm_username", "rhsm_password"],
+        },
+        "injectors": {
+            "extra_vars": {
+                "rhsm_username": "{{ rhsm_username }}",
+                "rhsm_password": "{{ rhsm_password }}",
+            },
+        },
+    }
+    p = api("POST", "/credential_types/", body)
+    print(f"Created credential type RHSM Subscription id={p['id']}")
+    return p["id"]
+
+
+def ensure_rhsm_credential():
+    """Credencial CRED-RHSM-ROQUE (requer ROQUE_RHSM_USERNAME e ROQUE_RHSM_PASSWORD para criar)."""
+    cid = credential_id_by_name("CRED-RHSM-ROQUE")
+    if cid:
+        print(f"CRED-RHSM-ROQUE exists id={cid}")
+        return cid
+    ct_id = ensure_rhsm_credential_type()
+    u = os.environ.get("ROQUE_RHSM_USERNAME", "").strip()
+    pw = os.environ.get("ROQUE_RHSM_PASSWORD", "").strip()
+    if not u or not pw:
+        print(
+            "WARN: defina ROQUE_RHSM_USERNAME e ROQUE_RHSM_PASSWORD para criar CRED-RHSM-ROQUE "
+            "(ou crie manualmente no AAP)."
+        )
+        return None
+    p = api(
+        "POST",
+        "/credentials/",
+        {
+            "name": "CRED-RHSM-ROQUE",
+            "description": "RHSM — lab ROQUE",
+            "organization": ORG_ID,
+            "credential_type": ct_id,
+            "inputs": {"rhsm_username": u, "rhsm_password": pw},
+        },
+    )
+    print(f"Created CRED-RHSM-ROQUE id={p['id']}")
+    return p["id"]
+
+
 def create_job_templates(project_id, inventory_id, ssh_id, snow_id, label_map):
     jt_by_name = {}
     for playbook, name, cred_kind, lab in PLAYBOOKS:
@@ -387,6 +448,9 @@ def create_job_templates(project_id, inventory_id, ssh_id, snow_id, label_map):
         elif cred_kind == "aap":
             cred_id = credential_id_by_name("CRED-AAP-ROQUE")
             become = False
+        elif cred_kind == "ssh_rhsm":
+            cred_id = None
+            become = True
         else:
             cred_id = None
             become = False
@@ -427,6 +491,16 @@ def create_job_templates(project_id, inventory_id, ssh_id, snow_id, label_map):
                 print(
                     f"WARN: CRED-AAP-ROQUE não encontrada — associe credencial "
                     f"Red Hat Ansible Automation Platform ao JT {name}"
+                )
+        elif cred_kind == "ssh_rhsm":
+            if ssh_id is not None:
+                associate_cred(jtid, ssh_id)
+            rhsm = credential_id_by_name("CRED-RHSM-ROQUE")
+            if rhsm is not None:
+                associate_cred(jtid, rhsm)
+            else:
+                print(
+                    f"WARN: CRED-RHSM-ROQUE não encontrada — associe SSH + credencial RHSM ao JT {name}"
                 )
         elif cred_id is not None:
             associate_cred(jtid, cred_id)
@@ -506,6 +580,8 @@ def main():
     pid = find_or_create_project()
     print("--- Credentials ---")
     ssh_id, snow_id = find_or_create_credentials()
+    print("--- RHSM credential (optional) ---")
+    ensure_rhsm_credential()
     print("--- Inventory ---")
     inv = find_or_create_inventory()
     print("--- Labels ---")
