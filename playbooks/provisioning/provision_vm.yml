@@ -23,6 +23,8 @@
 #   vmrest_user      - Usuario vmrest (extra_vars via injector)
 #   vmrest_password  - Senha vmrest (extra_vars via injector, secret)
 # =============================================================================
+
+# ── Play 1: Provisionar VM via vmrest API ─────────────────────────────────────
 - name: Provisionar VM no VMware Fusion
   hosts: localhost
   gather_facts: false
@@ -43,7 +45,6 @@
     vm_template_id: "FOVC332SCFEC425PKT21OGQM5UEETP0A"
     vmrest_base_url: "http://{{ vmrest_host }}:{{ vmrest_port }}/api"
     vmrest_content_type: "application/vnd.vmware.vmw.rest-v1+json"
-    ssh_opts: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10"
 
   tasks:
     # ── Validacao ────────────────────────────────────────────────────────────
@@ -55,7 +56,7 @@
           - vmrest_user | length > 0
           - vmrest_password | length > 0
           - vm_ssh_pass | length > 0
-        fail_msg: "As variaveis host_name, host_ip, vmrest_user, vmrest_password e vm_ssh_pass sao obrigatorias"
+        fail_msg: "As variaveis host_name, host_ip, vmrest_*, vm_ssh_pass sao obrigatorias"
         quiet: true
       tags:
         - provisioning
@@ -226,88 +227,23 @@
         - provisioning
         - vmware
 
-    # ── Configurar hostname e IP via SSH direto ──────────────────────────────
-    - name: Configurar hostname na VM
-      ansible.builtin.command:
-        cmd: >-
-          sshpass -p '{{ vm_ssh_pass }}' ssh {{ ssh_opts }}
-          {{ vm_ssh_user }}@{{ vm_boot_ip }}
-          "sudo hostnamectl set-hostname {{ host_fqdn }}"
-      changed_when: true
-      no_log: true
-      tags:
-        - provisioning
-        - vmware
-        - config
-
-    - name: Obter nome da conexao de rede ativa na VM
-      ansible.builtin.command:
-        cmd: >-
-          sshpass -p '{{ vm_ssh_pass }}' ssh {{ ssh_opts }}
-          {{ vm_ssh_user }}@{{ vm_boot_ip }}
-          "nmcli -t -f NAME connection show --active | head -1"
-      register: vm_connection_name
-      changed_when: false
-      no_log: true
-      tags:
-        - provisioning
-        - vmware
-        - config
-
-    - name: Registrar nome da conexao
-      ansible.builtin.set_fact:
-        net_connection: "{{ vm_connection_name.stdout | trim }}"
+    # ── Registrar VM para configuracao no Play 2 ─────────────────────────────
+    - name: Adicionar VM ao inventario temporario com credenciais SSH
+      ansible.builtin.add_host:
+        name: "{{ vm_boot_ip }}"
+        groups: vm_provisioned
+        ansible_user: "{{ vm_ssh_user }}"
+        ansible_password: "{{ vm_ssh_pass }}"
+        ansible_become: true
+        ansible_become_password: "{{ vm_ssh_pass }}"
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+        host_fqdn: "{{ host_fqdn }}"
+        host_ip_target: "{{ host_ip }}"
       tags:
         - provisioning
         - vmware
 
-    - name: Configurar IP estatico {{ host_ip }} na VM
-      ansible.builtin.command:
-        cmd: >-
-          sshpass -p '{{ vm_ssh_pass }}' ssh {{ ssh_opts }}
-          {{ vm_ssh_user }}@{{ vm_boot_ip }}
-          "sudo nmcli connection modify '{{ net_connection }}'
-          ipv4.addresses {{ host_ip }}/24
-          ipv4.gateway 192.168.100.1
-          ipv4.dns 192.168.100.11
-          ipv4.method manual
-          connection.autoconnect yes"
-      changed_when: true
-      no_log: true
-      tags:
-        - provisioning
-        - vmware
-        - config
-
-    - name: Aplicar configuracao de rede na VM (conexao sera perdida)
-      ansible.builtin.command:
-        cmd: >-
-          sshpass -p '{{ vm_ssh_pass }}' ssh {{ ssh_opts }}
-          {{ vm_ssh_user }}@{{ vm_boot_ip }}
-          "sudo nmcli connection up '{{ net_connection }}'"
-      async: 10
-      poll: 0
-      changed_when: true
-      no_log: true
-      tags:
-        - provisioning
-        - vmware
-        - config
-
-    - name: Aguardar SSH no IP final {{ host_ip }}
-      ansible.builtin.wait_for:
-        host: "{{ host_ip }}"
-        port: 22
-        timeout: 120
-        delay: 10
-        state: started
-      tags:
-        - provisioning
-        - vmware
-        - validate
-
-    # ── Coletar detalhes da VM ───────────────────────────────────────────────
-    - name: Consultar configuracao final da VM
+    - name: Coletar detalhes da VM
       ansible.builtin.uri:
         url: "{{ vmrest_base_url }}/vms/{{ vm_id }}"
         method: GET
@@ -327,14 +263,100 @@
         - provisioning
         - vmware
 
-    - name: Registrar timestamp do provisionamento
+    - name: Exibir status — configurando rede
+      ansible.builtin.debug:
+        msg: "VM {{ host_fqdn }} online ({{ vm_boot_ip }}). Configurando hostname e IP {{ host_ip }}..."
+      tags:
+        - provisioning
+        - vmware
+
+# ── Play 2: Configurar hostname e IP estatico ─────────────────────────────────
+# Credenciais SSH vem do add_host (vm_ssh_user/vm_ssh_pass da Survey)
+- name: Configurar hostname e rede na VM
+  hosts: vm_provisioned
+  gather_facts: true
+  become: true
+
+  tasks:
+    - name: Configurar hostname {{ host_fqdn }}
+      ansible.builtin.hostname:
+        name: "{{ host_fqdn }}"
+      tags:
+        - provisioning
+        - vmware
+        - config
+
+    - name: Obter nome da conexao de rede ativa
+      ansible.builtin.command:
+        cmd: "nmcli -t -f NAME connection show --active"
+      register: nm_connections
+      changed_when: false
+      tags:
+        - provisioning
+        - vmware
+        - config
+
+    - name: Registrar conexao de rede
+      ansible.builtin.set_fact:
+        net_connection: "{{ nm_connections.stdout_lines[0] }}"
+      tags:
+        - provisioning
+        - vmware
+        - config
+
+    - name: "Configurar IP estatico {{ host_ip_target }}"
+      ansible.builtin.command:
+        cmd: >-
+          nmcli connection modify "{{ net_connection }}"
+          ipv4.addresses "{{ host_ip_target }}/24"
+          ipv4.gateway "192.168.100.1"
+          ipv4.dns "192.168.100.11"
+          ipv4.method manual
+          connection.autoconnect yes
+      changed_when: true
+      tags:
+        - provisioning
+        - vmware
+        - config
+
+    - name: Aplicar configuracao de rede
+      ansible.builtin.command:
+        cmd: "nmcli connection up '{{ net_connection }}'"
+      async: 10
+      poll: 0
+      changed_when: true
+      tags:
+        - provisioning
+        - vmware
+        - config
+
+    - name: Aguardar SSH no IP final {{ host_ip_target }}
+      ansible.builtin.wait_for:
+        host: "{{ host_ip_target }}"
+        port: 22
+        timeout: 120
+        delay: 10
+        state: started
+      delegate_to: localhost
+      become: false
+      tags:
+        - provisioning
+        - vmware
+        - validate
+
+# ── Play 3: Resumo e exportacao ───────────────────────────────────────────────
+- name: Exportar dados do provisionamento
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Registrar timestamp
       ansible.builtin.set_fact:
         provisioned_at: "{{ lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') }}"
       tags:
         - provisioning
         - vmware
 
-    # ── Resumo ───────────────────────────────────────────────────────────────
     - name: Exibir resumo final
       ansible.builtin.debug:
         msg:
@@ -366,7 +388,6 @@
         - provisioning
         - vmware
 
-    # ── Exportar para workflow ───────────────────────────────────────────────
     - name: Exportar dados para proximo job template
       ansible.builtin.set_stats:
         data:
