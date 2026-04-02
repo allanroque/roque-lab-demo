@@ -46,6 +46,7 @@ PLAYBOOKS = [
     ("playbooks/ipam/get_next_ip.yml", "IPAM-GET-NEXT-IP", "ssh", "ipam"),
     ("playbooks/provisioning/provision_vm.yml", "PROVISION-VM-LOCAL", "none", "provisioning"),
     ("playbooks/provisioning/destroy_vm.yml", "DESTROY-VM-LOCAL", "ssh_vmware", "provisioning"),
+    ("playbooks/provisioning/add_host_inventory.yml", "ADD-HOST-INVENTORY", "aap", "provisioning"),
     ("playbooks/linux/adhoc/adhoc_checklist.yml", "LINUX-ADHOC-CHECKLIST", "ssh", "linux"),
     ("playbooks/linux/adhoc/adhoc_command.yml", "LINUX-ADHOC-COMMAND", "ssh", "linux"),
     ("playbooks/linux/adhoc/adhoc_logcollector.yml", "LINUX-ADHOC-LOGCOLLECTOR", "ssh", "linux"),
@@ -336,6 +337,8 @@ def default_limit_for_jt(name: str) -> str:
         return ""
     if name.startswith("PROVISION-") or name.startswith("DESTROY-"):
         return ""
+    if name.startswith("ADD-HOST-") or name.startswith("DEL-HOST-"):
+        return ""
     if name in ("APACHE-DEPLOY-LINUX", "APACHE-DEPLOY-LINUX-V1"):
         return "apache"
     if name in ("NGINX-DEPLOY-LINUX", "DEPLOY-NGINX-LINUX"):
@@ -381,6 +384,9 @@ def create_job_templates(project_id, inventory_id, ssh_id, snow_id, label_map):
         elif cred_kind == "ssh_vmware":
             cred_id = None
             become = False
+        elif cred_kind == "aap":
+            cred_id = credential_id_by_name("CRED-AAP-ROQUE")
+            become = False
         else:
             cred_id = None
             become = False
@@ -414,6 +420,14 @@ def create_job_templates(project_id, inventory_id, ssh_id, snow_id, label_map):
                 associate_cred(jtid, vmw)
             else:
                 print(f"WARN: CRED-VMWARE-ROQUE não encontrada — associe manualmente ao JT {name}")
+        elif cred_kind == "aap":
+            if cred_id is not None:
+                associate_cred(jtid, cred_id)
+            else:
+                print(
+                    f"WARN: CRED-AAP-ROQUE não encontrada — associe credencial "
+                    f"Red Hat Ansible Automation Platform ao JT {name}"
+                )
         elif cred_id is not None:
             associate_cred(jtid, cred_id)
         for lbl in all_labels_for_jt(name, lab):

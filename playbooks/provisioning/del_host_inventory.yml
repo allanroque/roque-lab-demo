@@ -1,0 +1,70 @@
+---
+# =============================================================================
+# Playbook: Remover host do inventario do AAP
+# Descricao: Remove o host do inventario INV-ROQUE-LAB
+#
+# Variaveis para Survey do AAP (ou recebidas via set_stats do workflow):
+#   host_name        - Nome curto do host (ex: server10) [obrigatorio]
+#   host_domain      - Dominio do host (default: aroque.com.br)
+#
+# Credenciais: Red Hat Ansible Automation Platform (tipo nativo)
+#   Injeta: controller_host, controller_username, controller_password
+# =============================================================================
+- name: Remover host do inventario do AAP
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    host_name: ""
+    host_domain: "aroque.com.br"
+    aap_inventory: "INV-ROQUE-LAB"
+
+  tasks:
+    - name: Validar variavel obrigatoria
+      ansible.builtin.assert:
+        that:
+          - host_name | length > 0
+        fail_msg: "A variavel host_name e obrigatoria"
+        quiet: true
+      tags:
+        - provisioning
+        - inventory
+        - validate
+
+    - name: Construir FQDN do host
+      ansible.builtin.set_fact:
+        host_fqdn: "{{ host_name.split('.')[0] }}.{{ host_domain }}"
+      tags:
+        - provisioning
+        - inventory
+
+    - name: Remover host {{ host_fqdn }} do inventario {{ aap_inventory }}
+      awx.awx.host:
+        name: "{{ host_fqdn }}"
+        inventory: "{{ aap_inventory }}"
+        state: absent
+        validate_certs: false
+      tags:
+        - provisioning
+        - inventory
+        - host
+
+    - name: Exibir resultado
+      ansible.builtin.debug:
+        msg: "Host {{ host_fqdn }} removido do inventario {{ aap_inventory }}"
+      tags:
+        - provisioning
+        - inventory
+
+    - name: Exportar dados para proximo job template
+      ansible.builtin.set_stats:
+        data:
+          host_name: "{{ host_name }}"
+          host_fqdn: "{{ host_fqdn }}"
+          aap_inventory: "{{ aap_inventory }}"
+          inventory_host_removed: true
+          sn_short_description: "Removed {{ host_fqdn }} from inventory {{ aap_inventory }}"
+      tags:
+        - provisioning
+        - inventory
+        - export
