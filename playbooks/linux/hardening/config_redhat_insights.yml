@@ -27,9 +27,11 @@
       changed_when: false
       tags:
         - insights
+      ignore_errors: true
 
     - name: Show registration status
       ansible.builtin.debug:
         msg: "{{ insights_status.stdout_lines }}"
       tags:
         - insights
+      ignore_errors: true

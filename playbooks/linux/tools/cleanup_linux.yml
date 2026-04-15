@@ -3,11 +3,11 @@
 # Playbook: Limpeza de servicos e pacotes no RHEL
 # Descricao: Para servicos, remove pacotes e limpa residuos de labs
 #
-# Variaveis para Survey do AAP:
-#   cleanup_apache   - Remover Apache httpd (yes/no, default: yes)
-#   cleanup_nginx    - Remover Nginx (yes/no, default: yes)
-#   cleanup_nodejs   - Remover app Flask/NodeJS (yes/no, default: no)
-#   cleanup_postgres - Remover PostgreSQL (yes/no, default: no)
+# Variaveis para Survey do AAP (valores yes/no em string):
+#   cleanup_apache   - default yes  — httpd, mod_ssl, conteudo /var/www/html
+#   cleanup_nginx    - default yes  — nginx, /usr/share/nginx/html
+#   cleanup_nodejs   - default no   — unit myapp, /opt/app
+#   cleanup_postgres - default no   — postgresql-server, /var/lib/pgsql/data
 # =============================================================================
 - name: Limpeza de servicos e pacotes no RHEL
   hosts: all
