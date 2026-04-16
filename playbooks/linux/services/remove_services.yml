@@ -28,12 +28,26 @@
 #   mask_units           false                   multiplechoice true|false
 # ──────────────────────────────────────────────────────────────────────────────
 
-- name: Services — Remoção completa (stop + disable + purge)
-  hosts: "{{ target_hosts | default('all') }}"
+- name: Services — Remoção completa (stop + disable + purge) — DESTRUTIVO
+  hosts: "{{ target_hosts | default('infra') }}"
   gather_facts: true
   become: true
 
   vars:
+    # ── SEGURANÇA ────────────────────────────────────────────────────────────
+    # Lista de hosts e grupos PROIBIDOS neste playbook. Se o target bater com
+    # qualquer um destes, a execução aborta no assert abaixo.
+    # Inclui o AAP Controller (aap01) e o grupo "ansible" por padrão.
+    forbidden_hosts:
+      - aap01.aroque.com.br
+      - aap01
+      - localhost
+      - 127.0.0.1
+    forbidden_groups:
+      - ansible
+      - aap
+      - controllers
+
     services_remove: "httpd,nginx"
     packages_remove: "httpd,mod_ssl,mod_http2,nginx,nginx-core,nginx-filesystem"
     ports_free: "80,443"
@@ -65,6 +79,49 @@
     logs_dirs: []
 
   pre_tasks:
+    # ── GUARDA-CORPOS ────────────────────────────────────────────────────────
+    - name: "SEGURANÇA · target_hosts deve ser definido explicitamente"
+      ansible.builtin.assert:
+        that:
+          - target_hosts is defined
+          - (target_hosts | string) | length > 0
+          - (target_hosts | string) not in ['all', 'ungrouped']
+        fail_msg: >-
+          Playbook destrutivo — target_hosts é obrigatório e NUNCA pode ser
+          'all' ou 'ungrouped'. Informe um host/grupo específico (ex: infra,
+          server03.aroque.com.br).
+      run_once: true
+      delegate_to: localhost
+      become: false
+      tags: [always]
+
+    - name: "SEGURANÇA · bloquear hosts proibidos (aap01, controllers, localhost)"
+      ansible.builtin.assert:
+        that:
+          - inventory_hostname not in forbidden_hosts
+          - (group_names | intersect(forbidden_groups)) | length == 0
+        fail_msg: >-
+          ABORT — {{ inventory_hostname }} é um host protegido (ou pertence a
+          grupo protegido {{ group_names | intersect(forbidden_groups) }}).
+          Este playbook não pode rodar em AAP Controllers ou infraestrutura crítica.
+          Revise target_hosts ou ajuste forbidden_hosts/forbidden_groups.
+      tags: [always]
+
+    - name: "SEGURANÇA · confirmação explícita (dry-run = check mode)"
+      ansible.builtin.debug:
+        msg:
+          - "================ ATENÇÃO — PLAYBOOK DESTRUTIVO ================="
+          - "Host:      {{ inventory_hostname }}"
+          - "Grupos:    {{ group_names }}"
+          - "Serviços:  {{ services_remove }}"
+          - "Pacotes:   {{ packages_remove }}"
+          - "Portas:    {{ ports_free }}"
+          - "Remove /etc?:        {{ remove_config_dirs }}"
+          - "Remove /var/www?:    {{ remove_content_dirs }}"
+          - "Para validar sem executar, rode com --check --diff."
+          - "================================================================"
+      tags: [always]
+
     - name: Normalizar listas (CSV → lista)
       ansible.builtin.set_fact:
         _services: "{{ (services_remove | string).split(',') | map('trim') | reject('equalto','') | list }}"

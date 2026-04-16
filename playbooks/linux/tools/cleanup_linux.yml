@@ -10,7 +10,7 @@
 #   cleanup_postgres - default no   — postgresql-server, /var/lib/pgsql/data
 # =============================================================================
 - name: Limpeza de servicos e pacotes no RHEL
-  hosts: all
+  hosts: "{{ target_hosts | default('infra') }}"
   become: true
   gather_facts: false
 
