@@ -1,0 +1,273 @@
+---
+# =========================================================================
+# Playbook: Remediacao - Conflito de Portas e Servicos
+# =========================================================================
+# Resolve conflitos de porta entre servicos como Apache, Nginx e PostgreSQL.
+# Identifica processos orfaos, limpa PIDs stale, libera portas e reinicia
+# o servico desejado de forma limpa.
+#
+# Variaveis para AAP Survey:
+#   target_host      - Host ou grupo alvo (default: all)
+#   desired_service  - Servico que deve ficar ativo na porta (default: httpd)
+#   cleanup_mode     - Modo de limpeza: soft (para processos) ou hard (para e desabilita concorrentes) (default: hard)
+# =========================================================================
+- name: Remediacao - Conflito de portas e servicos
+  hosts: "{{ target_host | default('all') }}"
+  ignore_unreachable: true
+  become: true
+  gather_facts: false
+  vars:
+    desired_service: httpd
+    cleanup_mode: hard
+
+    # Mapa de servicos e suas portas/arquivos associados
+    service_port_map:
+      httpd:
+        ports: [80, 443]
+        pid_files:
+          - /var/run/httpd/httpd.pid
+          - /run/httpd/httpd.pid
+        conflicting_services: [nginx]
+      nginx:
+        ports: [80, 443]
+        pid_files:
+          - /var/run/nginx.pid
+          - /run/nginx.pid
+        conflicting_services: [httpd]
+      postgresql:
+        ports: [5432]
+        pid_files:
+          - /var/lib/pgsql/data/postmaster.pid
+          - /var/run/postgresql/.s.PGSQL.5432.lock
+        socket_dirs:
+          - /var/run/postgresql
+          - /tmp/.s.PGSQL.5432
+          - /tmp/.s.PGSQL.5432.lock
+        conflicting_services: []
+
+  tasks:
+    # ── Diagnostico inicial ──────────────────────────────────────────────
+    - name: Coletar informacoes do servico desejado
+      ansible.builtin.set_fact:
+        svc_info: "{{ service_port_map[desired_service] }}"
+      tags: [remediation, port-conflict, check]
+
+    - name: Verificar quais processos estao usando as portas do servico
+      ansible.builtin.shell: |
+        ss -tlnp 2>/dev/null | grep -E ':{{ item }}\b' || echo "PORTA_LIVRE"
+      loop: "{{ svc_info.ports }}"
+      register: port_check
+      changed_when: false
+      failed_when: false
+      tags: [remediation, port-conflict, check]
+
+    - name: Exibir diagnostico de portas
+      ansible.builtin.debug:
+        msg: "Porta {{ item.item }}: {{ item.stdout }}"
+      loop: "{{ port_check.results }}"
+      loop_control:
+        label: "porta {{ item.item }}"
+      tags: [remediation, port-conflict, debug]
+
+    - name: Verificar status de todos os servicos relacionados
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+      register: all_svc_status
+      changed_when: false
+      failed_when: false
+      loop: "{{ [desired_service] + svc_info.conflicting_services }}"
+      tags: [remediation, port-conflict, check]
+
+    - name: Exibir status dos servicos
+      ansible.builtin.debug:
+        msg: "{{ item.item }}: {{ item.status.ActiveState | default('not-found') }}"
+      loop: "{{ all_svc_status.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      tags: [remediation, port-conflict, debug]
+
+    # ── Parar servicos conflitantes ──────────────────────────────────────
+    - name: Parar servicos que conflitam na mesma porta
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+      loop: "{{ svc_info.conflicting_services }}"
+      failed_when: false
+      tags: [remediation, port-conflict, stop]
+
+    - name: Desabilitar servicos conflitantes no boot (modo hard)
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: false
+      loop: "{{ svc_info.conflicting_services }}"
+      failed_when: false
+      when: cleanup_mode == "hard"
+      tags: [remediation, port-conflict, stop]
+
+    # ── Matar processos orfaos nas portas ────────────────────────────────
+    - name: Identificar PIDs orfaos usando as portas
+      ansible.builtin.shell: |
+        ss -tlnp 2>/dev/null | grep ':{{ item }}\b' | grep -oP 'pid=\K[0-9]+' | sort -u || true
+      loop: "{{ svc_info.ports }}"
+      register: orphan_pids
+      changed_when: false
+      failed_when: false
+      tags: [remediation, port-conflict, cleanup]
+
+    - name: Matar processos orfaos que seguram as portas
+      ansible.builtin.shell: |
+        for pid in {{ item.stdout | replace('\n', ' ') }}; do
+          if [ -n "$pid" ] && [ "$pid" != "" ]; then
+            proc_name=$(ps -p "$pid" -o comm= 2>/dev/null || true)
+            echo "Matando PID $pid ($proc_name)"
+            kill -TERM "$pid" 2>/dev/null || true
+            sleep 1
+            kill -9 "$pid" 2>/dev/null || true
+          fi
+        done
+      loop: "{{ orphan_pids.results }}"
+      loop_control:
+        label: "porta {{ item.item }}"
+      when: item.stdout | length > 0
+      register: kill_result
+      changed_when: item.stdout | length > 0
+      failed_when: false
+      tags: [remediation, port-conflict, cleanup]
+
+    # ── Limpar PID files stale ───────────────────────────────────────────
+    - name: Parar o servico desejado antes da limpeza
+      ansible.builtin.systemd:
+        name: "{{ desired_service }}"
+        state: stopped
+      failed_when: false
+      tags: [remediation, port-conflict, cleanup]
+
+    - name: Remover PID files stale do servico desejado
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ svc_info.pid_files }}"
+      failed_when: false
+      tags: [remediation, port-conflict, cleanup]
+
+    - name: Remover sockets stale do PostgreSQL
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ svc_info.socket_dirs | default([]) }}"
+      when: desired_service == "postgresql"
+      failed_when: false
+      tags: [remediation, port-conflict, cleanup]
+
+    - name: Remover PID files stale dos servicos conflitantes
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: >-
+        {{
+          svc_info.conflicting_services
+          | map('extract', service_port_map, 'pid_files')
+          | flatten
+        }}
+      failed_when: false
+      tags: [remediation, port-conflict, cleanup]
+
+    # ── Reload e reinicio limpo ──────────────────────────────────────────
+    - name: Recarregar systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+      tags: [remediation, port-conflict, restart]
+
+    - name: Aguardar liberacao completa das portas
+      ansible.builtin.shell: |
+        for i in $(seq 1 10); do
+          in_use=$(ss -tlnp 2>/dev/null | grep -cE ':{{ svc_info.ports | join("\\b|:") }}\b' || true)
+          if [ "$in_use" -eq 0 ]; then
+            echo "PORTAS_LIVRES"
+            exit 0
+          fi
+          sleep 1
+        done
+        echo "TIMEOUT_PORTAS_OCUPADAS"
+      register: port_wait
+      changed_when: false
+      failed_when: false
+      tags: [remediation, port-conflict, restart]
+
+    - name: Exibir resultado da espera
+      ansible.builtin.debug:
+        msg: "{{ port_wait.stdout }}"
+      tags: [remediation, port-conflict, debug]
+
+    - name: Iniciar servico desejado
+      ansible.builtin.systemd:
+        name: "{{ desired_service }}"
+        state: started
+        enabled: true
+      register: svc_start
+      tags: [remediation, port-conflict, restart]
+
+    - name: Aguardar estabilizacao do servico
+      ansible.builtin.pause:
+        seconds: 3
+      tags: [remediation, port-conflict, restart]
+
+    # ── Validacao final ──────────────────────────────────────────────────
+    - name: Verificar status final do servico desejado
+      ansible.builtin.systemd:
+        name: "{{ desired_service }}"
+      register: final_status
+      changed_when: false
+      tags: [remediation, port-conflict, check]
+
+    - name: Verificar portas apos restart
+      ansible.builtin.shell: |
+        ss -tlnp 2>/dev/null | grep -E ':{{ item }}\b' || echo "PORTA_NAO_ESCUTANDO"
+      loop: "{{ svc_info.ports }}"
+      register: final_port_check
+      changed_when: false
+      failed_when: false
+      tags: [remediation, port-conflict, check]
+
+    - name: Health check HTTP (servicos web)
+      ansible.builtin.uri:
+        url: "http://localhost:{{ svc_info.ports[0] }}/"
+        method: GET
+        status_code: [200, 301, 302, 403]
+      register: http_health
+      changed_when: false
+      when: desired_service in ['httpd', 'nginx']
+      ignore_errors: true
+      tags: [remediation, port-conflict, healthcheck]
+
+    - name: Health check PostgreSQL
+      ansible.builtin.shell: |
+        su - postgres -c "pg_isready" 2>/dev/null || echo "PG_NOT_READY"
+      register: pg_health
+      changed_when: false
+      when: desired_service == "postgresql"
+      failed_when: false
+      tags: [remediation, port-conflict, healthcheck]
+
+    # ── Relatorio ────────────────────────────────────────────────────────
+    - name: Exibir relatorio de resolucao de conflito
+      ansible.builtin.debug:
+        msg:
+          - "============================================"
+          - " PORT CONFLICT RESOLUTION REPORT"
+          - "============================================"
+          - " Host: {{ inventory_hostname }}"
+          - " Servico desejado: {{ desired_service }}"
+          - " Modo de limpeza: {{ cleanup_mode }}"
+          - "--------------------------------------------"
+          - " Servicos conflitantes parados: {{ svc_info.conflicting_services | join(', ') | default('nenhum') }}"
+          - " Processos orfaos eliminados: {{ orphan_pids.results | selectattr('stdout') | list | length > 0 }}"
+          - " PID files stale removidos: sim"
+          - " Portas verificadas: {{ svc_info.ports | join(', ') }}"
+          - " Portas livres antes do start: {{ port_wait.stdout }}"
+          - "--------------------------------------------"
+          - " Status final: {{ final_status.status.ActiveState }}"
+          - " HTTP health: {{ http_health.status | default('N/A') }}"
+          - " PG health: {{ pg_health.stdout | default('N/A') }}"
+          - "============================================"
+      tags: [remediation, port-conflict, report]

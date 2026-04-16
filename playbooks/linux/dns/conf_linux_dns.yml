@@ -1,55 +1,88 @@
 ---
+# =============================================================================
 # Playbook: Configurar DNS em interfaces gerenciadas pelo NetworkManager (RHEL 9)
-# Variables (suitable for AAP Survey):
-#   dns_servers:       list/string - DNS servers to configure (e.g., ["8.8.8.8", "1.1.1.1"])
-#   target_interface:  string      - Network interface to configure (default: primary interface)
+# =============================================================================
+# Variaveis para AAP Survey:
+#   target_host       - Host ou grupo alvo (default: all)
+#   dns_servers       - Servidores DNS (string separada por virgula ou lista)
+#                       Ex: "8.8.8.8, 1.1.1.1" ou ["8.8.8.8","1.1.1.1"]
+#   target_interface  - Interface de rede (default: interface principal via facts)
+# =============================================================================
+# Nota: Usa 'nmcli device reapply' em vez de 'connection down/up' para evitar
+# queda da sessao SSH durante a aplicacao do DNS.
+# =============================================================================
 - name: Configurar DNS em interfaces gerenciadas pelo NetworkManager (RHEL 9)
-  hosts: all
+  hosts: "{{ target_host | default('all') }}"
   ignore_unreachable: true
   become: true
   gather_facts: true
 
   vars:
-    dns_servers:
+    dns_servers: ""
     target_interface: "{{ ansible_default_ipv4.interface }}"
 
   tasks:
+    # ── Validacao de entrada ─────────────────────────────────────────────
+    - name: Validar que dns_servers foi informado
+      ansible.builtin.assert:
+        that:
+          - dns_servers is defined
+          - dns_servers | length > 0
+        fail_msg: "Variavel 'dns_servers' e obrigatoria. Informe ao menos um servidor DNS."
+        success_msg: "dns_servers recebido: {{ dns_servers }}"
+      tags: [dns, validate]
+
     - name: Garantir que o NetworkManager esta instalado e ativo
       ansible.builtin.service:
         name: NetworkManager
         state: started
         enabled: true
-      tags:
-        - dns
-        - networkmanager
+      tags: [dns, networkmanager]
 
-    - name: Verificar tipo de dns_servers
+    # ── Normalizar dns_servers (string do Survey → lista) ────────────────
+    - name: Verificar tipo de dns_servers recebido
       ansible.builtin.debug:
         msg: "dns_servers={{ dns_servers }}, tipo={{ dns_servers | type_debug }}"
-      tags:
-        - dns
-        - debug
+      tags: [dns, debug]
 
-    - name: Normalizar dns_servers como lista (caso seja string simples)
+    - name: Normalizar dns_servers como lista
       ansible.builtin.set_fact:
-        dns_servers_list: "{{ [dns_servers] if dns_servers is string else dns_servers }}"
-      tags:
-        - dns
+        dns_servers_list: >-
+          {%- if dns_servers is string -%}
+            {{ dns_servers | regex_replace('\s+', '') | split(',') | select | list }}
+          {%- elif dns_servers is iterable -%}
+            {{ dns_servers | select | list }}
+          {%- else -%}
+            {{ [dns_servers | string] }}
+          {%- endif -%}
+      tags: [dns]
 
     - name: Exibir DNS final que sera aplicado
       ansible.builtin.debug:
-        msg: "Aplicando DNS: {{ dns_servers_list | join(' ') }} na interface {{ target_interface }}"
-      tags:
-        - dns
-        - debug
+        msg: "Aplicando DNS: {{ dns_servers_list | join(', ') }} na interface {{ target_interface }}"
+      tags: [dns, debug]
 
+    # ── Coletar estado atual ─────────────────────────────────────────────
+    - name: Coletar DNS atual antes da alteracao
+      ansible.builtin.command:
+        cmd: nmcli -t -f IP4.DNS device show {{ target_interface }}
+      register: dns_before
+      changed_when: false
+      failed_when: false
+      tags: [dns, check]
+
+    - name: Exibir DNS atual
+      ansible.builtin.debug:
+        msg: "DNS atual: {{ dns_before.stdout | default('nao configurado') }}"
+      tags: [dns, debug]
+
+    # ── Identificar conexao ativa ────────────────────────────────────────
     - name: Obter nome da conexao ativa com a interface-alvo
       ansible.builtin.command:
         cmd: nmcli -t -f NAME,DEVICE connection show --active
       register: nmcli_connections
       changed_when: false
-      tags:
-        - dns
+      tags: [dns]
 
     - name: Extrair nome da conexao da interface alvo
       ansible.builtin.set_fact:
@@ -58,24 +91,90 @@
              | select('search', target_interface)
              | map('regex_replace', ':.*', '')
              | first }}
-      tags:
-        - dns
+      tags: [dns]
 
-    - name: Configurar DNS via nmcli (modo estatico)
-      community.general.nmcli:
-        conn_name: "{{ active_connection_name }}"
-        type: ethernet
-        dns4: "{{ dns_servers_list }}"
-        dns4_ignore_auto: true
-        state: present
-      tags:
-        - dns
-        - configure
+    - name: Exibir conexao encontrada
+      ansible.builtin.debug:
+        msg: "Conexao ativa: '{{ active_connection_name }}' na interface {{ target_interface }}"
+      tags: [dns, debug]
 
-    - name: Reiniciar a conexao de rede para aplicar DNS
+    # ── Aplicar configuracao DNS ─────────────────────────────────────────
+    - name: Configurar DNS via nmcli
       ansible.builtin.command:
-        cmd: "nmcli connection up '{{ active_connection_name }}'"
-      changed_when: true
-      tags:
-        - dns
-        - apply
+        cmd: >-
+          nmcli connection modify "{{ active_connection_name }}"
+          ipv4.ignore-auto-dns yes
+          ipv4.dns "{{ dns_servers_list | join(' ') }}"
+      register: dns_modify
+      tags: [dns, configure]
+
+    - name: Aplicar configuracao sem derrubar a conexao
+      ansible.builtin.command:
+        cmd: nmcli device reapply {{ target_interface }}
+      register: dns_reapply
+      failed_when: false
+      tags: [dns, apply]
+
+    - name: Fallback - recarregar conexao se reapply falhar
+      ansible.builtin.shell: |
+        nmcli connection up "{{ active_connection_name }}"
+      when: dns_reapply.rc != 0
+      async: 30
+      poll: 5
+      register: dns_reload
+      failed_when: false
+      tags: [dns, apply]
+
+    # ── Validacao pos-configuracao ────────────────────────────────────────
+    - name: Aguardar estabilizacao da rede
+      ansible.builtin.pause:
+        seconds: 3
+      tags: [dns, apply]
+
+    - name: Verificar resolv.conf apos aplicacao
+      ansible.builtin.command:
+        cmd: cat /etc/resolv.conf
+      register: resolv_conf
+      changed_when: false
+      tags: [dns, check]
+
+    - name: Coletar DNS aplicado via nmcli
+      ansible.builtin.command:
+        cmd: nmcli -t -f IP4.DNS device show {{ target_interface }}
+      register: dns_after
+      changed_when: false
+      failed_when: false
+      tags: [dns, check]
+
+    - name: Testar resolucao DNS
+      ansible.builtin.command:
+        cmd: nslookup redhat.com {{ dns_servers_list[0] }}
+      register: dns_test
+      changed_when: false
+      failed_when: false
+      timeout: 10
+      tags: [dns, check]
+
+    # ── Relatorio ────────────────────────────────────────────────────────
+    - name: Exibir relatorio de configuracao DNS
+      ansible.builtin.debug:
+        msg:
+          - "============================================"
+          - " DNS CONFIGURATION REPORT"
+          - "============================================"
+          - " Host: {{ inventory_hostname }}"
+          - " Interface: {{ target_interface }}"
+          - " Conexao: {{ active_connection_name }}"
+          - "--------------------------------------------"
+          - " DNS anterior: {{ dns_before.stdout | default('N/A') }}"
+          - " DNS aplicado: {{ dns_servers_list | join(', ') }}"
+          - " DNS ativo: {{ dns_after.stdout | default('N/A') }}"
+          - "--------------------------------------------"
+          - " nmcli modify: {{ 'OK' if dns_modify.rc == 0 else 'FALHA' }}"
+          - " Reapply: {{ 'OK' if dns_reapply.rc == 0 else 'fallback usado' }}"
+          - " Teste DNS: {{ 'OK' if dns_test.rc == 0 else 'FALHA - verificar conectividade' }}"
+          - "--------------------------------------------"
+          - " resolv.conf:"
+          - "{{ resolv_conf.stdout }}"
+          - "============================================"
+      tags: [dns, report]

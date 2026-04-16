@@ -1,16 +1,19 @@
 ---
 # =============================================================================
 # Playbook: Limpeza de servicos e pacotes no RHEL
-# Descricao: Para servicos, remove pacotes e limpa residuos de labs
+# Descricao: Para servicos, mata processos orfaos nas portas, remove pacotes
+#            e limpa residuos de labs. Resolve conflitos de porta antes de remover.
 #
 # Variaveis para Survey do AAP:
+#   target_host      - Host ou grupo alvo (default: all)
 #   cleanup_apache   - Remover Apache httpd (yes/no, default: yes)
 #   cleanup_nginx    - Remover Nginx (yes/no, default: yes)
 #   cleanup_nodejs   - Remover app Flask/NodeJS (yes/no, default: no)
 #   cleanup_postgres - Remover PostgreSQL (yes/no, default: no)
 # =============================================================================
 - name: Limpeza de servicos e pacotes no RHEL
-  hosts: all
+  hosts: "{{ target_host | default('all') }}"
+  ignore_unreachable: true
   become: true
   gather_facts: false
 
@@ -21,6 +24,25 @@
     cleanup_postgres: "no"
 
   tasks:
+    # ── Diagnostico de portas ────────────────────────────────────────────────
+    - name: Diagnostico - verificar processos nas portas 80, 443 e 5432
+      ansible.builtin.shell: |
+        echo "=== PORTA {{ item }} ==="
+        ss -tlnp 2>/dev/null | grep ':{{ item }}\b' || echo "livre"
+      loop: [80, 443, 5432, 8080, 3000]
+      register: port_diag
+      changed_when: false
+      failed_when: false
+      tags: [linux, cleanup, diag]
+
+    - name: Exibir diagnostico de portas
+      ansible.builtin.debug:
+        msg: "{{ item.stdout }}"
+      loop: "{{ port_diag.results }}"
+      loop_control:
+        label: "porta {{ item.item }}"
+      tags: [linux, cleanup, diag]
+
     # ── Apache ───────────────────────────────────────────────────────────────
     - name: Parar e desabilitar Apache
       ansible.builtin.systemd:
@@ -29,10 +51,27 @@
         enabled: false
       failed_when: false
       when: cleanup_apache == "yes"
-      tags:
-        - linux
-        - cleanup
-        - apache
+      tags: [linux, cleanup, apache]
+
+    - name: Matar processos orfaos do Apache
+      ansible.builtin.shell: |
+        pkill -9 httpd 2>/dev/null || true
+        pkill -9 apache2 2>/dev/null || true
+      when: cleanup_apache == "yes"
+      changed_when: false
+      failed_when: false
+      tags: [linux, cleanup, apache]
+
+    - name: Remover PID files stale do Apache
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /var/run/httpd/httpd.pid
+        - /run/httpd/httpd.pid
+      when: cleanup_apache == "yes"
+      failed_when: false
+      tags: [linux, cleanup, apache]
 
     - name: Remover pacotes do Apache
       ansible.builtin.dnf:
@@ -41,10 +80,7 @@
           - mod_ssl
         state: absent
       when: cleanup_apache == "yes"
-      tags:
-        - linux
-        - cleanup
-        - apache
+      tags: [linux, cleanup, apache]
 
     - name: Remover conteudo web do Apache
       ansible.builtin.file:
@@ -54,10 +90,7 @@
         - /var/www/html/index.html
         - /var/www/html/pg-health
       when: cleanup_apache == "yes"
-      tags:
-        - linux
-        - cleanup
-        - apache
+      tags: [linux, cleanup, apache]
 
     # ── Nginx ────────────────────────────────────────────────────────────────
     - name: Parar e desabilitar Nginx
@@ -67,30 +100,40 @@
         enabled: false
       failed_when: false
       when: cleanup_nginx == "yes"
-      tags:
-        - linux
-        - cleanup
-        - nginx
+      tags: [linux, cleanup, nginx]
+
+    - name: Matar processos orfaos do Nginx
+      ansible.builtin.shell: |
+        pkill -9 nginx 2>/dev/null || true
+      when: cleanup_nginx == "yes"
+      changed_when: false
+      failed_when: false
+      tags: [linux, cleanup, nginx]
+
+    - name: Remover PID files stale do Nginx
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /var/run/nginx.pid
+        - /run/nginx.pid
+      when: cleanup_nginx == "yes"
+      failed_when: false
+      tags: [linux, cleanup, nginx]
 
     - name: Remover pacotes do Nginx
       ansible.builtin.dnf:
         name: nginx
         state: absent
       when: cleanup_nginx == "yes"
-      tags:
-        - linux
-        - cleanup
-        - nginx
+      tags: [linux, cleanup, nginx]
 
     - name: Remover conteudo web do Nginx
       ansible.builtin.file:
         path: /usr/share/nginx/html
         state: absent
       when: cleanup_nginx == "yes"
-      tags:
-        - linux
-        - cleanup
-        - nginx
+      tags: [linux, cleanup, nginx]
 
     # ── App Flask / NodeJS ───────────────────────────────────────────────────
     - name: Parar e desabilitar servico myapp
@@ -100,10 +143,17 @@
         enabled: false
       failed_when: false
       when: cleanup_nodejs == "yes"
-      tags:
-        - linux
-        - cleanup
-        - app
+      tags: [linux, cleanup, app]
+
+    - name: Matar processos orfaos do Node/Flask
+      ansible.builtin.shell: |
+        pkill -9 -f "node.*myapp" 2>/dev/null || true
+        pkill -9 -f "flask.*myapp" 2>/dev/null || true
+        pkill -9 -f "gunicorn.*myapp" 2>/dev/null || true
+      when: cleanup_nodejs == "yes"
+      changed_when: false
+      failed_when: false
+      tags: [linux, cleanup, app]
 
     - name: Remover unit file e diretorio da app
       ansible.builtin.file:
@@ -113,19 +163,13 @@
         - /etc/systemd/system/myapp.service
         - /opt/app
       when: cleanup_nodejs == "yes"
-      tags:
-        - linux
-        - cleanup
-        - app
+      tags: [linux, cleanup, app]
 
     - name: Recarregar systemd apos remocao de unit files
       ansible.builtin.systemd:
         daemon_reload: true
       when: cleanup_nodejs == "yes"
-      tags:
-        - linux
-        - cleanup
-        - app
+      tags: [linux, cleanup, app]
 
     # ── PostgreSQL ───────────────────────────────────────────────────────────
     - name: Parar e desabilitar PostgreSQL
@@ -135,10 +179,29 @@
         enabled: false
       failed_when: false
       when: cleanup_postgres == "yes"
-      tags:
-        - linux
-        - cleanup
-        - postgres
+      tags: [linux, cleanup, postgres]
+
+    - name: Matar processos orfaos do PostgreSQL
+      ansible.builtin.shell: |
+        pkill -9 postgres 2>/dev/null || true
+        pkill -9 postmaster 2>/dev/null || true
+      when: cleanup_postgres == "yes"
+      changed_when: false
+      failed_when: false
+      tags: [linux, cleanup, postgres]
+
+    - name: Remover PID e socket files stale do PostgreSQL
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /var/lib/pgsql/data/postmaster.pid
+        - /var/run/postgresql/.s.PGSQL.5432.lock
+        - /tmp/.s.PGSQL.5432
+        - /tmp/.s.PGSQL.5432.lock
+      when: cleanup_postgres == "yes"
+      failed_when: false
+      tags: [linux, cleanup, postgres]
 
     - name: Remover pacotes do PostgreSQL
       ansible.builtin.dnf:
@@ -147,28 +210,25 @@
           - postgresql-contrib
         state: absent
       when: cleanup_postgres == "yes"
-      tags:
-        - linux
-        - cleanup
-        - postgres
+      tags: [linux, cleanup, postgres]
 
     - name: Remover dados do PostgreSQL
       ansible.builtin.file:
         path: /var/lib/pgsql/data
         state: absent
       when: cleanup_postgres == "yes"
-      tags:
-        - linux
-        - cleanup
-        - postgres
+      tags: [linux, cleanup, postgres]
 
     # ── Limpeza geral ────────────────────────────────────────────────────────
+    - name: Recarregar systemd final
+      ansible.builtin.systemd:
+        daemon_reload: true
+      tags: [linux, cleanup]
+
     - name: Limpar cache do DNF
       ansible.builtin.dnf:
         autoremove: true
-      tags:
-        - linux
-        - cleanup
+      tags: [linux, cleanup]
 
     - name: Limpar arquivos temporarios
       ansible.builtin.file:
@@ -176,9 +236,17 @@
         state: absent
       loop:
         - /tmp/parasol-website
-      tags:
-        - linux
-        - cleanup
+      tags: [linux, cleanup]
+
+    # ── Validacao final ──────────────────────────────────────────────────────
+    - name: Verificar portas liberadas apos limpeza
+      ansible.builtin.shell: |
+        ss -tlnp 2>/dev/null | grep -E ':{{ item }}\b' || echo "livre"
+      loop: [80, 443, 5432, 8080, 3000]
+      register: port_final
+      changed_when: false
+      failed_when: false
+      tags: [linux, cleanup, check]
 
     # ── Resumo ───────────────────────────────────────────────────────────────
     - name: Exibir resumo da limpeza
@@ -191,7 +259,12 @@
           - " Nginx      : {{ 'removido' if cleanup_nginx == 'yes' else 'mantido' }}"
           - " App Flask  : {{ 'removido' if cleanup_nodejs == 'yes' else 'mantido' }}"
           - " PostgreSQL : {{ 'removido' if cleanup_postgres == 'yes' else 'mantido' }}"
+          - "------------------------------------------------"
+          - " Portas verificadas apos limpeza:"
+          - "   80  : {{ port_final.results[0].stdout }}"
+          - "   443 : {{ port_final.results[1].stdout }}"
+          - "   5432: {{ port_final.results[2].stdout }}"
+          - "   8080: {{ port_final.results[3].stdout }}"
+          - "   3000: {{ port_final.results[4].stdout }}"
           - "================================================"
-      tags:
-        - linux
-        - cleanup
+      tags: [linux, cleanup]
