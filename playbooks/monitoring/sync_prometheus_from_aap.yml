@@ -1,0 +1,202 @@
+---
+# ==============================================================================
+# Playbook: Sincronizar targets do Prometheus a partir do inventário do AAP
+# ==============================================================================
+# FASE 1 — Apenas SO (node_exporter) guiado pelo grupo do inventário.
+#
+# Fluxo:
+#   1. Lê o inventory {{ aap_inventory_name }} via awx.awx.export
+#   2. Extrai os hosts do grupo {{ monitoring_group }}
+#   3. Renderiza um arquivo de targets no formato file_sd_configs do Prometheus
+#   4. Escreve o arquivo no diretório bind-mounted do container
+#   5. Prometheus auto-reload via refresh_interval (sem chamada de reload)
+#
+# Pré-requisito único no prometheus.yml (aplicar UMA vez):
+#
+#   - job_name: 'linux-nodes'
+#     file_sd_configs:
+#       - files:
+#           - '/etc/prometheus/targets/linux-nodes.yml'
+#         refresh_interval: 30s
+#
+# Vars Survey AAP:
+#   - monitoring_group       (default: infra)
+#   - monitoring_job_name    (default: linux-nodes)
+#   - monitoring_port        (default: 9100)
+#
+# Credential esperada:
+#   Tipo "Red Hat Ansible Automation Platform" anexada ao Job Template.
+#   As vars controller_host/username/password/oauthtoken são injetadas
+#   automaticamente pelo AAP ao job. Rodando local, exportar via env.
+# ==============================================================================
+
+- name: Sync Prometheus targets from AAP inventory (FASE 1 — SO)
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  become: false
+
+  vars:
+    # ── Parâmetros do AAP (Survey) ────────────────────────────────────────
+    aap_inventory_name: "INV-ROQUE-LAB"
+    aap_organization: "ROQUE"
+
+    # ── Parâmetros de monitoramento (Survey) ──────────────────────────────
+    monitoring_group: "infra"
+    monitoring_job_name: "linux-nodes"
+    monitoring_port: 9100
+
+    # ── Labels adicionais aplicados ao conjunto de targets ────────────────
+    monitoring_extra_labels:
+      group: "{{ monitoring_group }}"
+      env: "lab"
+      managed_by: "aap"
+      aap_inventory: "{{ aap_inventory_name }}"
+
+    # ── Destino do arquivo no host onde o Prometheus roda ────────────────
+    # Caminho relativo ao repo lab-containers (ajustar no Mac ou via extra_vars)
+    monitoring_targets_dir: >-
+      {{ lookup('ansible.builtin.env', 'MONITORING_TARGETS_DIR',
+         default='/Users/aroque/Documents/redhat/ansible/projetos/aap-lab-demo/lab-containers/prometheus/targets') }}
+    monitoring_target_filename: "{{ monitoring_job_name }}.yml"
+
+  pre_tasks:
+    # ── Guard-rail: validar parâmetros de entrada ────────────────────────
+    - name: "VALIDAÇÃO · parâmetros obrigatórios"
+      ansible.builtin.assert:
+        that:
+          - aap_inventory_name | length > 0
+          - monitoring_group | length > 0
+          - monitoring_job_name | length > 0
+          - monitoring_port | int > 0
+        fail_msg: "Parâmetros obrigatórios ausentes (inventory, group, job, port)"
+      tags: [always, validate]
+
+  tasks:
+    # ─────────────────────────────────────────────────────────────────────
+    # 1. Exportar o inventário completo do AAP via awx.awx
+    # ─────────────────────────────────────────────────────────────────────
+    - name: "AAP · exportar inventário '{{ aap_inventory_name }}'"
+      awx.awx.export:
+        inventory: "{{ aap_inventory_name }}"
+      register: _aap_export
+      tags: [export]
+
+    - name: "AAP · localizar inventário alvo dentro do export"
+      ansible.builtin.set_fact:
+        _inv_obj: >-
+          {{ (_aap_export.assets.inventory | default([]))
+             | selectattr('name', 'equalto', aap_inventory_name)
+             | list | first | default({}) }}
+      tags: [export]
+
+    - name: "AAP · falhar se inventário não foi encontrado"
+      ansible.builtin.assert:
+        that:
+          - _inv_obj is mapping
+          - _inv_obj | length > 0
+        fail_msg: >-
+          Inventory '{{ aap_inventory_name }}' não encontrado via awx.awx.export.
+          Verifique nome exato e permissões da credential AAP.
+      tags: [export]
+
+    # ─────────────────────────────────────────────────────────────────────
+    # 2. Resolver os hosts do grupo alvo
+    # ─────────────────────────────────────────────────────────────────────
+    - name: "AAP · extrair grupo '{{ monitoring_group }}' do inventário"
+      ansible.builtin.set_fact:
+        _grp_obj: >-
+          {{ (_inv_obj.groups | default([]))
+             | selectattr('name', 'equalto', monitoring_group)
+             | list | first | default({}) }}
+      tags: [export, group]
+
+    - name: "AAP · falhar se grupo não existe no inventário"
+      ansible.builtin.assert:
+        that:
+          - _grp_obj is mapping
+          - _grp_obj | length > 0
+          - (_grp_obj.hosts | default([])) | length > 0
+        fail_msg: >-
+          Grupo '{{ monitoring_group }}' não encontrado ou está vazio no
+          inventory '{{ aap_inventory_name }}'.
+      tags: [export, group]
+
+    - name: "AAP · consolidar lista de hosts do grupo"
+      ansible.builtin.set_fact:
+        monitoring_hosts: >-
+          {{ _grp_obj.hosts | map(attribute='name') | list
+             if (_grp_obj.hosts | first) is mapping
+             else _grp_obj.hosts }}
+      tags: [export, group]
+
+    - name: "AAP · exibir hosts descobertos"
+      ansible.builtin.debug:
+        msg:
+          - "Inventory : {{ aap_inventory_name }}"
+          - "Grupo     : {{ monitoring_group }}"
+          - "Hosts     : {{ monitoring_hosts }}"
+          - "Qtde      : {{ monitoring_hosts | length }}"
+      tags: [export, group]
+
+    # ─────────────────────────────────────────────────────────────────────
+    # 3. Preparar diretório de destino e renderizar targets
+    # ─────────────────────────────────────────────────────────────────────
+    - name: "PROMETHEUS · garantir diretório de targets"
+      ansible.builtin.file:
+        path: "{{ monitoring_targets_dir }}"
+        state: directory
+        mode: "0755"
+      tags: [write]
+
+    - name: "PROMETHEUS · backup do arquivo anterior (se existir)"
+      ansible.builtin.copy:
+        src: "{{ monitoring_targets_dir }}/{{ monitoring_target_filename }}"
+        dest: "{{ monitoring_targets_dir }}/{{ monitoring_target_filename }}.bak"
+        mode: "0644"
+        remote_src: true
+      failed_when: false
+      changed_when: false
+      tags: [write, backup]
+
+    - name: "PROMETHEUS · renderizar arquivo de targets ({{ monitoring_target_filename }})"
+      ansible.builtin.template:
+        src: templates/linux_nodes_targets.yml.j2
+        dest: "{{ monitoring_targets_dir }}/{{ monitoring_target_filename }}"
+        mode: "0644"
+      register: _target_render
+      tags: [write]
+
+    # ─────────────────────────────────────────────────────────────────────
+    # 4. Exportar stats para workflow / exibir banner final
+    # ─────────────────────────────────────────────────────────────────────
+    - name: "STATS · exportar metadados para workflow"
+      ansible.builtin.set_stats:
+        data:
+          stats_prom_inventory: "{{ aap_inventory_name }}"
+          stats_prom_group: "{{ monitoring_group }}"
+          stats_prom_job: "{{ monitoring_job_name }}"
+          stats_prom_targets_count: "{{ monitoring_hosts | length }}"
+          stats_prom_file: "{{ monitoring_targets_dir }}/{{ monitoring_target_filename }}"
+          stats_prom_changed: "{{ _target_render.changed }}"
+        per_host: false
+      tags: [stats]
+
+    - name: "BANNER · resumo da sincronização"
+      ansible.builtin.debug:
+        msg:
+          - "=================================================================="
+          - "  SYNC PROMETHEUS ← AAP INVENTORY — concluído"
+          - "=================================================================="
+          - "Inventory AAP  : {{ aap_inventory_name }} (org={{ aap_organization }})"
+          - "Grupo alvo     : {{ monitoring_group }}"
+          - "Job Prometheus : {{ monitoring_job_name }}"
+          - "Porta          : {{ monitoring_port }}"
+          - "Hosts render.  : {{ monitoring_hosts | length }}"
+          - "Arquivo        : {{ monitoring_targets_dir }}/{{ monitoring_target_filename }}"
+          - "Alterado?      : {{ _target_render.changed }}"
+          - "------------------------------------------------------------------"
+          - "Prometheus recarrega targets via refresh_interval (file_sd_configs)."
+          - "Nenhuma chamada /-/reload necessária."
+          - "=================================================================="
+      tags: [banner]

@@ -1,0 +1,20 @@
+---
+# ==============================================================================
+# Arquivo gerado automaticamente — NÃO EDITAR À MÃO
+# Playbook: playbooks/monitoring/sync_prometheus_from_aap.yml
+# ------------------------------------------------------------------------------
+# Fonte      : AAP Inventory "{{ aap_inventory_name }}" (org {{ aap_organization }})
+# Grupo      : {{ monitoring_group }}
+# Job        : {{ monitoring_job_name }}
+# Porta      : {{ monitoring_port }}
+# Gerado em  : {{ ansible_date_time.iso8601 }}
+# Gerado por : {{ lookup('ansible.builtin.env', 'USER', default='unknown') }}
+# ==============================================================================
+- targets:
+{% for host in monitoring_hosts | sort %}
+    - "{{ host }}:{{ monitoring_port }}"
+{% endfor %}
+  labels:
+{% for k, v in monitoring_extra_labels.items() %}
+    {{ k }}: "{{ v }}"
+{% endfor %}
