@@ -1,39 +1,36 @@
 ---
 # ==============================================================================
-# EDA Rulebook — Alertmanager Demo (3 cenários, 3 estratégias de remediação)
+# EDA Rulebook — Alertmanager Demo (escopo mínimo: SELinux + Disco)
 # ==============================================================================
 # Fluxo end-to-end:
-#   Prometheus  →  Alertmanager  →  EDA :5050  →  AAP (Job/Workflow Templates)
+#   Prometheus  →  Alertmanager  →  EDA :5050  →  AAP (Job Templates)
 #
-# Cenários cobertos nesta demo:
+# Cenários cobertos nesta versão mínima:
 #
 #   ┌──────────────────────────┬──────────────┬───────────────────────────────┐
 #   │ Alerta                   │ Severidade   │ Estratégia                    │
 #   ├──────────────────────────┼──────────────┼───────────────────────────────┤
-#   │ 1. HTTPServiceDown       │ critical     │ Auto-remediação direta        │
-#   │ 2. HighFilesystemUsage   │ warning      │ Workflow com aprovação        │
-#   │ 3. SELinuxDisabled       │ security     │ Notificação + ticket (SNOW)   │
+#   │ 1. HighFilesystemUsage   │ warning      │ Self-healing direto           │
+#   │ 2. SELinuxDisabled       │ security     │ Ticket ServiceNow (abrir/fechar) │
 #   └──────────────────────────┴──────────────┴───────────────────────────────┘
 #
-# Templates esperados no AAP (Organização: ROQUE):
-#   • LINUX-APACHE-RESTART          (Job Template)         — Cenário 1
-#   • WF-DISK-SPACE-APPROVAL        (Workflow Template)    — Cenário 2
-#     └── deve conter um "Approval Node" antes da task corretiva
-#   • SNOW-INCIDENT-CREATE          (Job Template)         — Cenário 3 (firing)
-#   • SNOW-INCIDENT-RESOLVE         (Job Template)         — Cenário 3 (resolved)
+# Job Templates chamados (todos em Organization: ROQUE):
+#   • SELF-HEALING-DISK-USAGE       — firing (disco)
+#   • SNOW-INCIDENT-CREATE          — firing (SELinux)
+#   • SNOW-INCIDENT-CLOSE           — resolved (SELinux)
 #
-# Configuração no Alertmanager (alertmanager.yml):
+# Configuração esperada no Alertmanager (alertmanager/config.yml):
 #   route:
-#     receiver: eda-webhook
+#     receiver: webhook_receiver
 #     group_by: ['alertname', 'instance']
 #   receivers:
-#     - name: 'eda-webhook'
+#     - name: 'webhook_receiver'
 #       webhook_configs:
-#         - url: 'http://aap01.aroque.com.br:5050/endpoint'
+#         - url: 'http://<EDA>:5050/prometheus'
 #           send_resolved: true
 # ==============================================================================
 
-- name: Alertmanager demo — 3 cenários com estratégias distintas de remediação
+- name: Alertmanager demo — SELinux + Disco (mínimo)
   hosts: localhost
 
   # ─────────────────────────────────────────────────────────────────────────
@@ -52,53 +49,12 @@
   rules:
 
     # ═════════════════════════════════════════════════════════════════════
-    # CENÁRIO 1 — HTTPServiceDown (critical)
-    # Estratégia: AUTO-REMEDIAÇÃO DIRETA
-    # Objetivo.: reiniciar o Apache no host afetado sem intervenção humana.
+    # CENÁRIO 1 — HighFilesystemUsage (warning)
+    # Estratégia: SELF-HEALING direto (sem approval para agilizar a demo)
+    # Template : SELF-HEALING-DISK-USAGE (JT em org ROQUE)
     # ═════════════════════════════════════════════════════════════════════
 
-    - name: "[C1·CRIT] HTTP down → auto-restart Apache"
-      condition: >-
-        event.alert.labels.alertname == "HTTPServiceDown"
-        and event.alert.status == "firing"
-      throttle:
-        once_within: 5 minutes
-        group_by_attributes:
-          - event.alert.labels.alertname
-          - event.alert.labels.instance
-      action:
-        run_job_template:
-          name: "LINUX-APACHE-RESTART"
-          organization: "ROQUE"
-          job_args:
-            limit: "{{ event.meta.hosts }}"
-          extra_vars:
-            alert_name: "{{ event.alert.labels.alertname }}"
-            severity: "{{ event.alert.labels.severity | default('critical') }}"
-            host_alvo: "{{ event.alert.labels.instance }}"
-            summary: "{{ event.alert.annotations.summary | default('') }}"
-            description: "{{ event.alert.annotations.description | default('') }}"
-            trigger_source: "EDA+Alertmanager"
-
-    - name: "[C1·CRIT] HTTP restaurado → log de resolução"
-      condition: >-
-        event.alert.labels.alertname == "HTTPServiceDown"
-        and event.alert.status == "resolved"
-      action:
-        debug:
-          msg: >-
-            [RESOLVED] HTTPServiceDown em {{ event.meta.hosts }}
-            ({{ event.alert.labels.instance | default('?') }})
-
-    # ═════════════════════════════════════════════════════════════════════
-    # CENÁRIO 2 — HighFilesystemUsage (warning)
-    # Estratégia: WORKFLOW COM APROVAÇÃO
-    # Objetivo.: disparar workflow no AAP que pausa em um Approval Node
-    #           antes de executar o playbook de limpeza. Mostra governança
-    #           "human-in-the-loop" para ações que alteram dados em disco.
-    # ═════════════════════════════════════════════════════════════════════
-
-    - name: "[C2·WARN] Disco > 80% → workflow com approval"
+    - name: "[C1·WARN] Disco alto → SELF-HEALING-DISK-USAGE"
       condition: >-
         event.alert.labels.alertname == "HighFilesystemUsage"
         and event.alert.status == "firing"
@@ -109,8 +65,8 @@
           - event.alert.labels.instance
           - event.alert.labels.mountpoint
       action:
-        run_workflow_template:
-          name: "WF-DISK-SPACE-APPROVAL"
+        run_job_template:
+          name: "SELF-HEALING-DISK-USAGE"
           organization: "ROQUE"
           job_args:
             limit: "{{ event.meta.hosts }}"
@@ -122,9 +78,8 @@
             summary: "{{ event.alert.annotations.summary | default('') }}"
             description: "{{ event.alert.annotations.description | default('') }}"
             trigger_source: "EDA+Alertmanager"
-            approval_timeout_minutes: 60
 
-    - name: "[C2·WARN] Disco normalizado → log de resolução"
+    - name: "[C1·WARN] Disco normalizado → log de resolução"
       condition: >-
         event.alert.labels.alertname == "HighFilesystemUsage"
         and event.alert.status == "resolved"
@@ -135,14 +90,12 @@
             mount={{ event.alert.labels.mountpoint | default('/') }}
 
     # ═════════════════════════════════════════════════════════════════════
-    # CENÁRIO 3 — SELinuxDisabled (security)
-    # Estratégia: NOTIFICAÇÃO + TICKET (ServiceNow)
-    # Objetivo.: abrir incident no ServiceNow em vez de remediar sozinho,
-    #           pois mexer em SELinux pode afetar apps — fica no timão do
-    #           time de segurança. Fechamento automático ao resolver.
+    # CENÁRIO 2 — SELinuxDisabled (security)
+    # Estratégia: TICKET no ServiceNow (abrir/fechar), sem auto-remediar
+    # Templates: SNOW-INCIDENT-CREATE (firing), SNOW-INCIDENT-CLOSE (resolved)
     # ═════════════════════════════════════════════════════════════════════
 
-    - name: "[C3·SEC] SELinux off → abrir INC no ServiceNow"
+    - name: "[C2·SEC] SELinux off → SNOW-INCIDENT-CREATE"
       condition: >-
         event.alert.labels.alertname == "SELinuxDisabled"
         and event.alert.status == "firing"
@@ -174,13 +127,13 @@
             snow_assignment_group: "Security Operations"
             trigger_source: "EDA+Alertmanager"
 
-    - name: "[C3·SEC] SELinux restaurado → fechar INC no ServiceNow"
+    - name: "[C2·SEC] SELinux restaurado → SNOW-INCIDENT-CLOSE"
       condition: >-
         event.alert.labels.alertname == "SELinuxDisabled"
         and event.alert.status == "resolved"
       action:
         run_job_template:
-          name: "SNOW-INCIDENT-RESOLVE"
+          name: "SNOW-INCIDENT-CLOSE"
           organization: "ROQUE"
           job_args:
             limit: "{{ event.meta.hosts }}"
@@ -203,7 +156,7 @@
       condition: >-
         event.alert is defined
         and event.alert.labels.alertname not in
-            ["HTTPServiceDown", "HighFilesystemUsage", "SELinuxDisabled"]
+            ["HighFilesystemUsage", "SELinuxDisabled"]
       action:
         debug:
           msg: >-
