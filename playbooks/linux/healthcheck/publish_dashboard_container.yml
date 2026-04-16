@@ -80,16 +80,25 @@
           Rode antes o playbook playbooks/linux/healthcheck/collect_infra_report.yml.
       tags: [dashboard]
 
-    - name: Carregar conteúdo dos relatórios
+    - name: Ler conteúdo dos relatórios no host alvo (slurp)
+      ansible.builtin.slurp:
+        src: "{{ item.path }}"
+      register: _hc_slurped
+      loop: "{{ _hc_files.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      tags: [dashboard]
+
+    - name: Decodificar relatórios JSON
       ansible.builtin.set_fact:
         hc_hosts: >-
           {{
             hc_hosts | default([])
-            + [ (lookup('file', item.path) | from_json) ]
+            + [ (item.content | b64decode | from_json) ]
           }}
-      loop: "{{ _hc_files.files }}"
+      loop: "{{ _hc_slurped.results }}"
       loop_control:
-        label: "{{ item.path | basename }}"
+        label: "{{ item.source | basename }}"
       tags: [dashboard]
 
     - name: Timestamp da publicação

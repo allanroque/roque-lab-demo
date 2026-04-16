@@ -27,6 +27,8 @@
     pg_data_dir: "/var/lib/pgsql/data"
     log_tail_lines: 200
     web_root: "/var/www/html/pg-health"
+    web_path: "pg-health"
+    httpd_port: 80
     db_name: "{{ target_db | default('postgres') }}"
     schema_name: "{{ target_schema | default('public') }}"
 
@@ -525,6 +527,81 @@
       tags:
         - web
         - healthcheck
+
+    # ====== URL de acesso ao dashboard ======
+    - name: Flush dos handlers (aplicar reload do Apache antes do smoke test)
+      ansible.builtin.meta: flush_handlers
+      tags:
+        - web
+        - healthcheck
+
+    - name: "Aguardar Apache responder na porta {{ httpd_port }}"
+      ansible.builtin.wait_for:
+        host: "127.0.0.1"
+        port: "{{ httpd_port | int }}"
+        delay: 1
+        timeout: 20
+      tags:
+        - web
+        - smoke
+        - healthcheck
+
+    - name: Smoke test do dashboard de healthcheck
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ httpd_port }}/{{ web_path }}/"
+        status_code: [200, 403]
+        return_content: false
+      register: _hc_smoke
+      retries: 5
+      delay: 2
+      until: _hc_smoke.status in [200, 403]
+      failed_when: false
+      tags:
+        - web
+        - smoke
+        - healthcheck
+
+    - name: Calcular URLs de acesso ao dashboard
+      ansible.builtin.set_fact:
+        _hc_url_ip: "http://{{ ansible_default_ipv4.address | default(inventory_hostname) }}:{{ httpd_port }}/{{ web_path }}/"
+        _hc_url_fqdn: "http://{{ ansible_fqdn | default(inventory_hostname) }}:{{ httpd_port }}/{{ web_path }}/"
+        _hc_url_json: "http://{{ ansible_default_ipv4.address | default(inventory_hostname) }}:{{ httpd_port }}/{{ web_path }}/health.json"
+      tags:
+        - web
+        - healthcheck
+
+    - name: Exportar URLs para o Workflow (set_stats)
+      ansible.builtin.set_stats:
+        data:
+          stats_pg_hc_url_ip: "{{ _hc_url_ip }}"
+          stats_pg_hc_url_fqdn: "{{ _hc_url_fqdn }}"
+          stats_pg_hc_url_json: "{{ _hc_url_json }}"
+          stats_pg_hc_port: "{{ httpd_port }}"
+          stats_pg_hc_status: "{{ _hc_smoke.status | default('?') }}"
+        per_host: true
+      tags:
+        - web
+        - healthcheck
+
+    - name: Banner — Dashboard de Healthcheck do PostgreSQL publicado
+      ansible.builtin.debug:
+        msg:
+          - "=================================================================="
+          - "  POSTGRES HEALTHCHECK — {{ inventory_hostname }}"
+          - "=================================================================="
+          - "Host             : {{ ansible_fqdn | default(inventory_hostname) }}"
+          - "DB analisado     : {{ db_name }} · schema {{ schema_name }}"
+          - "Coletado em      : {{ report.collected_at }}"
+          - "Status HTTP      : {{ _hc_smoke.status | default('?') }}"
+          - "------------------------------------------------------------------"
+          - "Dashboard (IP)   : {{ _hc_url_ip }}"
+          - "Dashboard (FQDN) : {{ _hc_url_fqdn }}"
+          - "JSON bruto       : {{ _hc_url_json }}"
+          - "=================================================================="
+      tags:
+        - web
+        - healthcheck
+        - report
 
   handlers:
     - name: Reload Apache
