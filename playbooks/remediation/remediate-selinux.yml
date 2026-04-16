@@ -2,11 +2,11 @@
 # =========================================================================
 # Playbook: Remediacao - SELinux desabilitado
 # =========================================================================
-# Variaveis para AAP Survey:
-#   target_host  - Host ou grupo alvo (default: target)
+# Chamado pelo Workflow WF-REMEDIATION-SELINUX via EDA.
+# O host alvo é controlado pelo LIMIT do AAP (não por variável).
 # =========================================================================
 - name: Remediacao - Reativar SELinux em modo enforcing
-  hosts: "{{ target_host | default('target') }}"
+  hosts: all
   ignore_unreachable: true
   become: true
   gather_facts: true
