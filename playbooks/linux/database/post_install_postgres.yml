@@ -20,7 +20,7 @@
 # ============================================================
 
 - name: Post-install PostgreSQL — criar bancos, usuarios e dados de teste
-  hosts: "{{ target_hosts | default('postgres') }}"
+  hosts: "{{ target_hosts | default('postgresql') }}"
   ignore_unreachable: true
   gather_facts: true
   become: true
