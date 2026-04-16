@@ -11,14 +11,13 @@
 #   │ Alerta                   │ Severidade   │ Estratégia                    │
 #   ├──────────────────────────┼──────────────┼───────────────────────────────┤
 #   │ 1. HighFilesystemUsage   │ warning      │ Self-healing direto           │
-#   │ 2. SELinuxDisabled       │ security     │ Workflow remediation SELinux  │
-#   │                          │              │ (resolve encerra incident)    │
+#   │ 2. SELinuxDisabled       │ security     │ Workflow de remediação (só    │
+#   │                          │              │ firing — resolve não aciona)  │
 #   └──────────────────────────┴──────────────┴───────────────────────────────┘
 #
 # AAP chamados (todos em Organization: ROQUE):
 #   • JT  SELF-HEALING-DISK-USAGE   — firing (disco)
-#   • WF  WF-REMEDIATION-SELINUX    — firing (SELinux) — remediação + incident
-#   • JT  SNOW-INCIDENT-CLOSE       — resolved (SELinux)
+#   • WF  WF-REMEDIATION-SELINUX    — firing (SELinux) — remediação completa
 #
 # Configuração esperada no Alertmanager (alertmanager/config.yml):
 #   route:
@@ -94,8 +93,9 @@
     # CENÁRIO 2 — SELinuxDisabled (security)
     # Estratégia: WORKFLOW de remediação no AAP
     #             (abre incident → remedia SELinux → valida)
-    # Workflow: WF-REMEDIATION-SELINUX (firing)
-    # Template: SNOW-INCIDENT-CLOSE    (resolved)
+    # Workflow: WF-REMEDIATION-SELINUX (apenas firing)
+    # Observação: resolve NÃO aciona nada — o próprio workflow já faz
+    #             a remediação e encerra o ciclo.
     # ═════════════════════════════════════════════════════════════════════
 
     - name: "[C2·SEC] SELinux off → WF-REMEDIATION-SELINUX"
@@ -130,25 +130,6 @@
             snow_category: "security"
             snow_subcategory: "configuration_drift"
             snow_assignment_group: "Security Operations"
-            trigger_source: "EDA+Alertmanager"
-
-    - name: "[C2·SEC] SELinux restaurado → SNOW-INCIDENT-CLOSE"
-      condition: >-
-        event.alert.labels.alertname == "SELinuxDisabled"
-        and event.alert.status == "resolved"
-      action:
-        run_job_template:
-          name: "SNOW-INCIDENT-CLOSE"
-          organization: "ROQUE"
-          job_args:
-            limit: "{{ event.meta.hosts }}"
-          extra_vars:
-            alert_name: "{{ event.alert.labels.alertname }}"
-            host_alvo: "{{ event.alert.labels.instance }}"
-            snow_close_notes: >-
-              SELinux re-habilitado em {{ event.alert.labels.instance }}.
-              Fechamento automático via EDA.
-            snow_close_code: "Solved (Permanently)"
             trigger_source: "EDA+Alertmanager"
 
     # ═════════════════════════════════════════════════════════════════════
