@@ -79,32 +79,100 @@
 
   tasks:
     # ─────────────────────────────────────────────────────────────────────
-    # 1. Preparar auth e base URL da API do Controller (via gateway)
+    # 1. Resolver credenciais do AAP (tolerante a 3 convenções)
     # ─────────────────────────────────────────────────────────────────────
-    - name: "AAP · montar URL base da API do Controller"
+    # AAP 2.5+/2.6  -> aap_hostname / aap_username / aap_password / aap_token / aap_validate_certs
+    # AAP 2.4 / AWX -> controller_host / controller_username / controller_password / controller_oauthtoken / controller_verify_ssl
+    # Tower clássico -> tower_host / tower_username / tower_password / tower_oauthtoken / tower_verify_ssl
+    - name: "AAP · resolver host/usuário/senha/token da credential"
       ansible.builtin.set_fact:
-        _api_base: "{{ controller_host | regex_replace('/$', '') }}{{ aap_api_prefix }}"
-        _use_token: "{{ (controller_oauthtoken | default('')) | length > 0 }}"
+        _aap_host: >-
+          {{ aap_hostname
+             | default(controller_host, true)
+             | default(tower_host, true)
+             | default('') }}
+        _aap_user: >-
+          {{ aap_username
+             | default(controller_username, true)
+             | default(tower_username, true)
+             | default('') }}
+        _aap_pass: >-
+          {{ aap_password
+             | default(controller_password, true)
+             | default(tower_password, true)
+             | default('') }}
+        _aap_token: >-
+          {{ aap_token
+             | default(controller_oauthtoken, true)
+             | default(tower_oauthtoken, true)
+             | default('') }}
+        _aap_verify: >-
+          {{ aap_validate_certs
+             | default(controller_verify_ssl, true)
+             | default(tower_verify_ssl, true)
+             | default(false) }}
+      vars:
+        # defaults pra evitar "undefined" quando a convenção não foi injetada
+        aap_hostname: "{{ aap_hostname | default('') }}"
+        aap_username: "{{ aap_username | default('') }}"
+        aap_password: "{{ aap_password | default('') }}"
+        aap_token: "{{ aap_token | default('') }}"
+        aap_validate_certs: "{{ aap_validate_certs | default(omit) }}"
+        controller_host: "{{ controller_host | default('') }}"
+        controller_username: "{{ controller_username | default('') }}"
+        controller_password: "{{ controller_password | default('') }}"
+        controller_oauthtoken: "{{ controller_oauthtoken | default('') }}"
+        controller_verify_ssl: "{{ controller_verify_ssl | default(omit) }}"
+        tower_host: "{{ tower_host | default('') }}"
+        tower_username: "{{ tower_username | default('') }}"
+        tower_password: "{{ tower_password | default('') }}"
+        tower_oauthtoken: "{{ tower_oauthtoken | default('') }}"
+        tower_verify_ssl: "{{ tower_verify_ssl | default(omit) }}"
+      tags: [api, always]
+
+    - name: "AAP · validar que a credential foi injetada"
+      ansible.builtin.assert:
+        that:
+          - _aap_host | length > 0
+          - (_aap_user | length > 0 and _aap_pass | length > 0) or (_aap_token | length > 0)
+        fail_msg: >-
+          Credential AAP não foi injetada. Anexe CRED-AAP-ROQUE ao Job Template.
+          Vars esperadas: aap_hostname/controller_host/tower_host + user/pass OU token.
+      tags: [api, always]
+
+    - name: "AAP · montar URL base e modo de auth"
+      ansible.builtin.set_fact:
+        _api_base: "{{ _aap_host | regex_replace('/$', '') }}{{ aap_api_prefix }}"
+        _use_token: "{{ _aap_token | length > 0 }}"
       tags: [api, always]
 
     - name: "AAP · montar cabeçalhos de autenticação"
       ansible.builtin.set_fact:
         _aap_headers: >-
-          {{ {'Authorization': 'Bearer ' ~ controller_oauthtoken,
+          {{ {'Authorization': 'Bearer ' ~ _aap_token,
               'Accept': 'application/json'}
              if _use_token
              else {'Accept': 'application/json'} }}
+      tags: [api, always]
+
+    - name: "AAP · exibir contexto resolvido (debug)"
+      ansible.builtin.debug:
+        msg:
+          - "Base URL  : {{ _api_base }}"
+          - "Usuário   : {{ _aap_user if not _use_token else '(usando OAuth token)' }}"
+          - "Auth mode : {{ 'Bearer token' if _use_token else 'Basic auth' }}"
+          - "Verify SSL: {{ _aap_verify }}"
       tags: [api, always]
 
     - name: "AAP · testar conectividade (ping)"
       ansible.builtin.uri:
         url: "{{ _api_base }}/ping/"
         method: GET
-        url_username: "{{ controller_username if not _use_token else omit }}"
-        url_password: "{{ controller_password if not _use_token else omit }}"
+        url_username: "{{ _aap_user if not _use_token else omit }}"
+        url_password: "{{ _aap_pass if not _use_token else omit }}"
         force_basic_auth: "{{ not _use_token }}"
         headers: "{{ _aap_headers }}"
-        validate_certs: "{{ controller_verify_ssl | default(false) | bool }}"
+        validate_certs: "{{ _aap_verify | bool }}"
         return_content: true
         status_code: [200]
       register: _aap_ping
@@ -117,11 +185,11 @@
       ansible.builtin.uri:
         url: "{{ _api_base }}/inventories/?name={{ aap_inventory_name | urlencode }}"
         method: GET
-        url_username: "{{ controller_username if not _use_token else omit }}"
-        url_password: "{{ controller_password if not _use_token else omit }}"
+        url_username: "{{ _aap_user if not _use_token else omit }}"
+        url_password: "{{ _aap_pass if not _use_token else omit }}"
         force_basic_auth: "{{ not _use_token }}"
         headers: "{{ _aap_headers }}"
-        validate_certs: "{{ controller_verify_ssl | default(false) | bool }}"
+        validate_certs: "{{ _aap_verify | bool }}"
         return_content: true
         status_code: [200]
       register: _inv_resp
@@ -159,11 +227,11 @@
         url: >-
           {{ _api_base }}/inventories/{{ _inv_id }}/groups/?name={{ monitoring_group | urlencode }}
         method: GET
-        url_username: "{{ controller_username if not _use_token else omit }}"
-        url_password: "{{ controller_password if not _use_token else omit }}"
+        url_username: "{{ _aap_user if not _use_token else omit }}"
+        url_password: "{{ _aap_pass if not _use_token else omit }}"
         force_basic_auth: "{{ not _use_token }}"
         headers: "{{ _aap_headers }}"
-        validate_certs: "{{ controller_verify_ssl | default(false) | bool }}"
+        validate_certs: "{{ _aap_verify | bool }}"
         return_content: true
         status_code: [200]
       register: _grp_resp
@@ -199,11 +267,11 @@
       ansible.builtin.uri:
         url: "{{ _api_base }}/groups/{{ _grp_id }}/hosts/?page_size=200"
         method: GET
-        url_username: "{{ controller_username if not _use_token else omit }}"
-        url_password: "{{ controller_password if not _use_token else omit }}"
+        url_username: "{{ _aap_user if not _use_token else omit }}"
+        url_password: "{{ _aap_pass if not _use_token else omit }}"
         force_basic_auth: "{{ not _use_token }}"
         headers: "{{ _aap_headers }}"
-        validate_certs: "{{ controller_verify_ssl | default(false) | bool }}"
+        validate_certs: "{{ _aap_verify | bool }}"
         return_content: true
         status_code: [200]
       register: _hosts_resp
