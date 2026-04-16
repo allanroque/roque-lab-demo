@@ -1,0 +1,446 @@
+---
+# ============================================================
+# Playbook: Post-install PostgreSQL — cria dbs, users e dados de teste
+# ============================================================
+# Descricao:
+#   Executa apos deploy_postgres.yml. Cria 3 databases (app1, app2, awx),
+#   4 usuarios de teste e popula tabelas com dados para validacao
+#   pos-implementacao e demos.
+#
+# Variaveis Survey AAP:
+#   - reset_test_data   : Se true, apaga e recria dados de teste (default: false)
+#   - default_password  : Senha default dos usuarios de teste (AAP credential)
+#
+# Grupo alvo sugerido no inventario: postgresql
+# ============================================================
+
+- name: Post-install PostgreSQL — criar bancos, usuarios e dados de teste
+  hosts: postgresql
+  ignore_unreachable: true
+  gather_facts: true
+  become: true
+
+  vars:
+    reset_test_data: false
+    default_password: ""
+
+    # Databases a criar (owner = usuario da aplicacao)
+    postgres_databases:
+      - name: app1
+        owner: app1_user
+        comment: "Database da aplicacao de frontend"
+      - name: app2
+        owner: app2_user
+        comment: "Database da aplicacao de catalogo"
+      - name: awx
+        owner: awx_user
+        comment: "Database simulando metadata do AWX"
+
+    # Usuarios de teste
+    postgres_test_users:
+      - name: app1_user
+        password: "{{ default_password }}"
+        role_attr_flags: LOGIN
+        comment: "Owner do database app1"
+      - name: app2_user
+        password: "{{ default_password }}"
+        role_attr_flags: LOGIN
+        comment: "Owner do database app2"
+      - name: awx_user
+        password: "{{ default_password }}"
+        role_attr_flags: LOGIN
+        comment: "Owner do database awx"
+      - name: readonly_user
+        password: "{{ default_password }}"
+        role_attr_flags: LOGIN
+        comment: "Usuario de leitura em todos os databases"
+
+    # Schemas (tabelas) por database — idempotente via CREATE TABLE IF NOT EXISTS
+    postgres_schemas:
+      app1:
+        - |
+          CREATE TABLE IF NOT EXISTS users (
+            id           SERIAL PRIMARY KEY,
+            username     VARCHAR(64)  NOT NULL UNIQUE,
+            email        VARCHAR(128) NOT NULL,
+            full_name    VARCHAR(128) NOT NULL,
+            is_active    BOOLEAN      NOT NULL DEFAULT true,
+            created_at   TIMESTAMP    NOT NULL DEFAULT NOW()
+          )
+        - |
+          CREATE TABLE IF NOT EXISTS orders (
+            id           SERIAL PRIMARY KEY,
+            user_id      INTEGER      NOT NULL REFERENCES users(id),
+            product      VARCHAR(128) NOT NULL,
+            amount       NUMERIC(10,2) NOT NULL,
+            status       VARCHAR(32)  NOT NULL DEFAULT 'pending',
+            created_at   TIMESTAMP    NOT NULL DEFAULT NOW()
+          )
+      app2:
+        - |
+          CREATE TABLE IF NOT EXISTS categories (
+            id           SERIAL PRIMARY KEY,
+            name         VARCHAR(64)  NOT NULL UNIQUE,
+            description  VARCHAR(255)
+          )
+        - |
+          CREATE TABLE IF NOT EXISTS products (
+            id           SERIAL PRIMARY KEY,
+            name         VARCHAR(128) NOT NULL,
+            category_id  INTEGER      REFERENCES categories(id),
+            price        NUMERIC(10,2) NOT NULL,
+            stock        INTEGER      NOT NULL DEFAULT 0,
+            created_at   TIMESTAMP    NOT NULL DEFAULT NOW()
+          )
+      awx:
+        - |
+          CREATE TABLE IF NOT EXISTS hosts (
+            id           SERIAL PRIMARY KEY,
+            hostname     VARCHAR(128) NOT NULL UNIQUE,
+            group_name   VARCHAR(64)  NOT NULL,
+            last_seen    TIMESTAMP    NOT NULL DEFAULT NOW()
+          )
+        - |
+          CREATE TABLE IF NOT EXISTS jobs (
+            id           SERIAL PRIMARY KEY,
+            template_name VARCHAR(128) NOT NULL,
+            status       VARCHAR(32)  NOT NULL,
+            started_at   TIMESTAMP    NOT NULL DEFAULT NOW(),
+            finished_at  TIMESTAMP,
+            launched_by  VARCHAR(64)  NOT NULL
+          )
+
+    # Dados de teste — INSERT ... ON CONFLICT DO NOTHING garante idempotencia
+    postgres_seed_data:
+      app1:
+        - query: >
+            INSERT INTO users (username, email, full_name) VALUES
+              ('aroque',   'aroque@aroque.com.br',   'Allan Roque'),
+              ('jdoe',     'jdoe@aroque.com.br',     'John Doe'),
+              ('msilva',   'msilva@aroque.com.br',   'Maria Silva'),
+              ('bpereira', 'bpereira@aroque.com.br', 'Bruno Pereira')
+            ON CONFLICT (username) DO NOTHING
+        - query: >
+            INSERT INTO orders (user_id, product, amount, status) VALUES
+              (1, 'RHEL Subscription',        1500.00, 'paid'),
+              (2, 'Ansible Automation Plat', 25000.00, 'paid'),
+              (3, 'OpenShift Cluster',       85000.00, 'pending'),
+              (4, 'Red Hat Satellite',        9800.00, 'shipped')
+            ON CONFLICT DO NOTHING
+
+      app2:
+        - query: >
+            INSERT INTO categories (name, description) VALUES
+              ('Infra',       'Componentes de infraestrutura'),
+              ('Automation',  'Ferramentas de automacao'),
+              ('Monitoring',  'Observabilidade e monitoramento')
+            ON CONFLICT (name) DO NOTHING
+        - query: >
+            INSERT INTO products (name, category_id, price, stock) VALUES
+              ('Ansible Controller',  2,   0.00,  99),
+              ('EDA Controller',      2,   0.00,  99),
+              ('Prometheus Server',   3, 100.00,  50),
+              ('Grafana Enterprise',  3, 250.00,  30)
+            ON CONFLICT DO NOTHING
+
+      awx:
+        - query: >
+            INSERT INTO hosts (hostname, group_name) VALUES
+              ('server01.aroque.com.br', 'apache'),
+              ('server02.aroque.com.br', 'postgresql'),
+              ('server03.aroque.com.br', 'app')
+            ON CONFLICT (hostname) DO NOTHING
+        - query: >
+            INSERT INTO jobs (template_name, status, finished_at, launched_by) VALUES
+              ('Deploy Apache',     'successful', NOW(), 'aroque'),
+              ('Deploy PostgreSQL', 'successful', NOW(), 'aroque'),
+              ('Deploy App',        'successful', NOW(), 'aroque'),
+              ('Disk Cleanup EDA',  'successful', NOW(), 'system')
+            ON CONFLICT DO NOTHING
+
+  tasks:
+    # ── Sanity check ─────────────────────────────────────────────────────────
+    - name: Garantir que o servico do PostgreSQL esta em execucao
+      ansible.builtin.service:
+        name: postgresql
+        state: started
+        enabled: true
+      tags:
+        - postgres
+        - check
+
+    # ── Usuarios ─────────────────────────────────────────────────────────────
+    - name: Criar usuarios de teste no PostgreSQL
+      become_user: postgres
+      community.postgresql.postgresql_user:
+        name: "{{ item.name }}"
+        password: "{{ item.password }}"
+        role_attr_flags: "{{ item.role_attr_flags }}"
+        state: present
+      loop: "{{ postgres_test_users }}"
+      loop_control:
+        label: "{{ item.name }}"
+      no_log: true
+      tags:
+        - postgres
+        - users
+
+    # ── Databases ────────────────────────────────────────────────────────────
+    - name: Criar databases de teste
+      become_user: postgres
+      community.postgresql.postgresql_db:
+        name: "{{ item.name }}"
+        owner: "{{ item.owner }}"
+        encoding: UTF-8
+        lc_collate: en_US.UTF-8
+        lc_ctype: en_US.UTF-8
+        template: template0
+        state: present
+      loop: "{{ postgres_databases }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - postgres
+        - databases
+
+    - name: Conceder privilegios totais ao owner de cada database
+      become_user: postgres
+      community.postgresql.postgresql_privs:
+        database: "{{ item.name }}"
+        roles: "{{ item.owner }}"
+        type: database
+        privs: ALL
+        state: present
+      loop: "{{ postgres_databases }}"
+      loop_control:
+        label: "{{ item.name }} -> {{ item.owner }}"
+      tags:
+        - postgres
+        - grants
+
+    - name: Conceder SELECT ao readonly_user em todos os databases
+      become_user: postgres
+      community.postgresql.postgresql_privs:
+        database: "{{ item.name }}"
+        roles: readonly_user
+        type: database
+        privs: CONNECT
+        state: present
+      loop: "{{ postgres_databases }}"
+      loop_control:
+        label: "{{ item.name }}"
+      tags:
+        - postgres
+        - grants
+
+    # ── Reset opcional dos dados de teste ────────────────────────────────────
+    - name: Reset — dropar tabelas existentes (quando reset_test_data=true)
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        db: "{{ item.0.name }}"
+        query: "DROP TABLE IF EXISTS {{ item.1 }} CASCADE"
+      loop: "{{ postgres_databases | product(['orders', 'users', 'products', 'categories', 'jobs', 'hosts']) | list }}"
+      loop_control:
+        label: "{{ item.0.name }}.{{ item.1 }}"
+      when: reset_test_data | bool
+      tags:
+        - postgres
+        - reset
+
+    # ── Schema (tabelas) ─────────────────────────────────────────────────────
+    - name: Criar tabelas no database app1
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        db: app1
+        query: "{{ item }}"
+      loop: "{{ postgres_schemas.app1 }}"
+      loop_control:
+        label: "app1 ({{ loop.index }}/{{ postgres_schemas.app1 | length }})"
+      tags:
+        - postgres
+        - schema
+
+    - name: Criar tabelas no database app2
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        db: app2
+        query: "{{ item }}"
+      loop: "{{ postgres_schemas.app2 }}"
+      loop_control:
+        label: "app2 ({{ loop.index }}/{{ postgres_schemas.app2 | length }})"
+      tags:
+        - postgres
+        - schema
+
+    - name: Criar tabelas no database awx
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        db: awx
+        query: "{{ item }}"
+      loop: "{{ postgres_schemas.awx }}"
+      loop_control:
+        label: "awx ({{ loop.index }}/{{ postgres_schemas.awx | length }})"
+      tags:
+        - postgres
+        - schema
+
+    # ── Dados de teste (idempotentes via ON CONFLICT) ────────────────────────
+    - name: Popular dados de teste no database app1
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        db: app1
+        query: "{{ item.query }}"
+      loop: "{{ postgres_seed_data.app1 }}"
+      loop_control:
+        label: "app1 seed {{ loop.index }}"
+      tags:
+        - postgres
+        - seed
+
+    - name: Popular dados de teste no database app2
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        db: app2
+        query: "{{ item.query }}"
+      loop: "{{ postgres_seed_data.app2 }}"
+      loop_control:
+        label: "app2 seed {{ loop.index }}"
+      tags:
+        - postgres
+        - seed
+
+    - name: Popular dados de teste no database awx
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        db: awx
+        query: "{{ item.query }}"
+      loop: "{{ postgres_seed_data.awx }}"
+      loop_control:
+        label: "awx seed {{ loop.index }}"
+      tags:
+        - postgres
+        - seed
+
+    - name: Conceder SELECT ao readonly_user em todas as tabelas existentes
+      become_user: postgres
+      community.postgresql.postgresql_privs:
+        database: "{{ item }}"
+        roles: readonly_user
+        type: table
+        objs: ALL_IN_SCHEMA
+        schema: public
+        privs: SELECT
+        state: present
+      loop:
+        - app1
+        - app2
+        - awx
+      tags:
+        - postgres
+        - grants
+
+    # ── Validacao pos-implementacao (counts) ─────────────────────────────────
+    - name: Validar contagem de linhas — app1.users
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        db: app1
+        query: "SELECT COUNT(*) AS total FROM users"
+      register: _count_app1_users
+      changed_when: false
+      tags:
+        - postgres
+        - validate
+
+    - name: Validar contagem de linhas — app1.orders
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        db: app1
+        query: "SELECT COUNT(*) AS total FROM orders"
+      register: _count_app1_orders
+      changed_when: false
+      tags:
+        - postgres
+        - validate
+
+    - name: Validar contagem de linhas — app2.categories
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        db: app2
+        query: "SELECT COUNT(*) AS total FROM categories"
+      register: _count_app2_cats
+      changed_when: false
+      tags:
+        - postgres
+        - validate
+
+    - name: Validar contagem de linhas — app2.products
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        db: app2
+        query: "SELECT COUNT(*) AS total FROM products"
+      register: _count_app2_prods
+      changed_when: false
+      tags:
+        - postgres
+        - validate
+
+    - name: Validar contagem de linhas — awx.hosts
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        db: awx
+        query: "SELECT COUNT(*) AS total FROM hosts"
+      register: _count_awx_hosts
+      changed_when: false
+      tags:
+        - postgres
+        - validate
+
+    - name: Validar contagem de linhas — awx.jobs
+      become_user: postgres
+      community.postgresql.postgresql_query:
+        db: awx
+        query: "SELECT COUNT(*) AS total FROM jobs"
+      register: _count_awx_jobs
+      changed_when: false
+      tags:
+        - postgres
+        - validate
+
+    # ── Relatorio final ──────────────────────────────────────────────────────
+    - name: Exibir resumo do post-install
+      ansible.builtin.debug:
+        msg:
+          - "────────────────────────────────────────────────────────"
+          - "Post-install PostgreSQL concluido em {{ ansible_hostname }}"
+          - "────────────────────────────────────────────────────────"
+          - "Databases criados : app1, app2, awx"
+          - "Usuarios de teste : app1_user, app2_user, awx_user, readonly_user"
+          - "────────────────────────────────────────────────────────"
+          - "Contagem de linhas:"
+          - "  app1.users       : {{ _count_app1_users.query_result[0].total }}"
+          - "  app1.orders      : {{ _count_app1_orders.query_result[0].total }}"
+          - "  app2.categories  : {{ _count_app2_cats.query_result[0].total }}"
+          - "  app2.products    : {{ _count_app2_prods.query_result[0].total }}"
+          - "  awx.hosts        : {{ _count_awx_hosts.query_result[0].total }}"
+          - "  awx.jobs         : {{ _count_awx_jobs.query_result[0].total }}"
+          - "────────────────────────────────────────────────────────"
+      tags:
+        - postgres
+        - report
+
+  post_tasks:
+    - name: Exportar metricas do post-install para workflow (set_stats)
+      ansible.builtin.set_stats:
+        aggregate: false
+        data:
+          stats_postgres_host: "{{ ansible_default_ipv4.address }}"
+          stats_postgres_databases: "app1,app2,awx"
+          stats_postgres_users_created: 4
+          stats_postgres_app1_users: "{{ _count_app1_users.query_result[0].total }}"
+          stats_postgres_app1_orders: "{{ _count_app1_orders.query_result[0].total }}"
+          stats_postgres_app2_products: "{{ _count_app2_prods.query_result[0].total }}"
+          stats_postgres_awx_jobs: "{{ _count_awx_jobs.query_result[0].total }}"
+          stats_phase: "postgres_post_install_ready"
+      tags:
+        - postgres
+        - report
