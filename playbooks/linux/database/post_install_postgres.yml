@@ -7,6 +7,10 @@
 #   4 usuarios de teste e popula tabelas com dados para validacao
 #   pos-implementacao e demos.
 #
+#   Implementacao com ansible.builtin + psql/createdb/createuser — sem
+#   dependencia de community.postgresql (nao depende de collection extra
+#   no Execution Environment do AAP).
+#
 # Variaveis Survey AAP:
 #   - reset_test_data   : yes/no — apaga e recria dados de teste (default: no)
 #   - default_password  : Senha dos usuarios de teste (obrigatorio no survey)
@@ -24,6 +28,7 @@
   vars:
     reset_test_data: "no"
     default_password: ""
+    sql_tmp_prefix: "/tmp/aap_post_install"
 
     # Databases a criar (owner = usuario da aplicacao)
     postgres_databases:
@@ -40,20 +45,12 @@
     # Usuarios de teste
     postgres_test_users:
       - name: app1_user
-        password: "{{ default_password }}"
-        role_attr_flags: LOGIN
         comment: "Owner do database app1"
       - name: app2_user
-        password: "{{ default_password }}"
-        role_attr_flags: LOGIN
         comment: "Owner do database app2"
       - name: awx_user
-        password: "{{ default_password }}"
-        role_attr_flags: LOGIN
         comment: "Owner do database awx"
       - name: readonly_user
-        password: "{{ default_password }}"
-        role_attr_flags: LOGIN
         comment: "Usuario de leitura em todos os databases"
 
     # Schemas (tabelas) por database — idempotente via CREATE TABLE IF NOT EXISTS
@@ -182,181 +179,186 @@
         - check
 
     # ── Usuarios ─────────────────────────────────────────────────────────────
-    - name: Criar usuarios de teste no PostgreSQL
+    - name: Criar usuarios de teste (createuser)
       become_user: postgres
-      community.postgresql.postgresql_user:
-        name: "{{ item.name }}"
-        password: "{{ item.password }}"
-        role_attr_flags: "{{ item.role_attr_flags }}"
-        state: present
+      ansible.builtin.command:
+        argv:
+          - createuser
+          - --login
+          - --no-superuser
+          - --no-createdb
+          - --no-createrole
+          - "{{ item.name }}"
+      register: _createuser
+      failed_when:
+        - _createuser.rc != 0
+        - "'already exists' not in (_createuser.stderr | default(''))"
+      changed_when: _createuser.rc == 0
       loop: "{{ postgres_test_users }}"
       loop_control:
         label: "{{ item.name }}"
+      tags:
+        - postgres
+        - users
+
+    - name: Definir senha dos usuarios (ALTER USER)
+      become_user: postgres
+      ansible.builtin.command:
+        argv:
+          - psql
+          - -v
+          - ON_ERROR_STOP=1
+          - -c
+          - "ALTER USER {{ item.name }} WITH PASSWORD '{{ default_password }}';"
+      loop: "{{ postgres_test_users }}"
+      loop_control:
+        label: "{{ item.name }}"
+      changed_when: false
       no_log: true
       tags:
         - postgres
         - users
 
     # ── Databases ────────────────────────────────────────────────────────────
-    - name: Criar databases de teste
+    - name: Criar databases de teste (createdb -O owner)
       become_user: postgres
-      community.postgresql.postgresql_db:
-        name: "{{ item.name }}"
-        owner: "{{ item.owner }}"
-        encoding: UTF-8
-        lc_collate: en_US.UTF-8
-        lc_ctype: en_US.UTF-8
-        template: template0
-        state: present
+      ansible.builtin.command:
+        argv:
+          - createdb
+          - -O
+          - "{{ item.owner }}"
+          - -E
+          - UTF8
+          - -T
+          - template0
+          - "{{ item.name }}"
+      register: _createdb
+      failed_when:
+        - _createdb.rc != 0
+        - "'already exists' not in (_createdb.stderr | default(''))"
+      changed_when: _createdb.rc == 0
       loop: "{{ postgres_databases }}"
       loop_control:
-        label: "{{ item.name }}"
+        label: "{{ item.name }} -> owner={{ item.owner }}"
       tags:
         - postgres
         - databases
 
-    - name: Conceder privilegios totais ao owner de cada database
+    - name: Conceder ALL PRIVILEGES no database ao owner
       become_user: postgres
-      community.postgresql.postgresql_privs:
-        database: "{{ item.name }}"
-        roles: "{{ item.owner }}"
-        type: database
-        privs: ALL
-        state: present
+      ansible.builtin.command:
+        argv:
+          - psql
+          - -v
+          - ON_ERROR_STOP=1
+          - -c
+          - "GRANT ALL PRIVILEGES ON DATABASE {{ item.name }} TO {{ item.owner }};"
       loop: "{{ postgres_databases }}"
       loop_control:
         label: "{{ item.name }} -> {{ item.owner }}"
+      changed_when: false
       tags:
         - postgres
         - grants
 
-    - name: Conceder SELECT ao readonly_user em todos os databases
+    - name: Conceder CONNECT no database ao readonly_user
       become_user: postgres
-      community.postgresql.postgresql_privs:
-        database: "{{ item.name }}"
-        roles: readonly_user
-        type: database
-        privs: CONNECT
-        state: present
+      ansible.builtin.command:
+        argv:
+          - psql
+          - -v
+          - ON_ERROR_STOP=1
+          - -c
+          - "GRANT CONNECT ON DATABASE {{ item.name }} TO readonly_user;"
       loop: "{{ postgres_databases }}"
       loop_control:
         label: "{{ item.name }}"
+      changed_when: false
       tags:
         - postgres
         - grants
 
-    # ── Reset opcional dos dados de teste ────────────────────────────────────
-    - name: Reset — dropar tabelas existentes (quando reset_test_data=true)
+    # ── Gerar arquivo SQL por database (schema + seed + grants) ──────────────
+    - name: Gerar script SQL (schema + seed) por database
       become_user: postgres
-      community.postgresql.postgresql_query:
-        db: "{{ item.0.name }}"
-        query: "DROP TABLE IF EXISTS {{ item.1 }} CASCADE"
-      loop: "{{ postgres_databases | product(['orders', 'users', 'products', 'categories', 'jobs', 'hosts']) | list }}"
-      loop_control:
-        label: "{{ item.0.name }}.{{ item.1 }}"
-      when: reset_test_data | bool
-      tags:
-        - postgres
-        - reset
+      ansible.builtin.copy:
+        dest: "{{ sql_tmp_prefix }}_{{ item.key }}.sql"
+        owner: postgres
+        group: postgres
+        mode: "0600"
+        content: |
+          -- Gerado por AAP post_install_postgres.yml
+          SET client_min_messages = WARNING;
 
-    # ── Schema (tabelas) ─────────────────────────────────────────────────────
-    - name: Criar tabelas no database app1
-      become_user: postgres
-      community.postgresql.postgresql_query:
-        db: app1
-        query: "{{ item }}"
-      loop: "{{ postgres_schemas.app1 }}"
+          {% if reset_test_data | bool %}
+          -- Reset dos dados de teste (reset_test_data=true)
+          {% for tbl in ['orders','products','jobs','users','categories','hosts'] %}
+          DROP TABLE IF EXISTS {{ tbl }} CASCADE;
+          {% endfor %}
+
+          {% endif %}
+          -- Schema
+          {% for stmt in item.value %}
+          {{ stmt }};
+          {% endfor %}
+
+          -- Dados de teste
+          {% for s in postgres_seed_data[item.key] | default([]) %}
+          {{ s.query }};
+          {% endfor %}
+
+          -- Grant SELECT ao readonly_user nas tabelas do schema public
+          GRANT SELECT ON ALL TABLES IN SCHEMA public TO readonly_user;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO readonly_user;
+      loop: "{{ postgres_schemas | dict2items }}"
       loop_control:
-        label: "app1 ({{ loop.index }}/{{ postgres_schemas.app1 | length }})"
+        label: "{{ item.key }}"
       tags:
         - postgres
         - schema
+        - seed
 
-    - name: Criar tabelas no database app2
+    - name: Aplicar schema + seed em cada database (psql -f)
       become_user: postgres
-      community.postgresql.postgresql_query:
-        db: app2
-        query: "{{ item }}"
-      loop: "{{ postgres_schemas.app2 }}"
+      ansible.builtin.command:
+        argv:
+          - psql
+          - -d
+          - "{{ item.key }}"
+          - -v
+          - ON_ERROR_STOP=1
+          - -f
+          - "{{ sql_tmp_prefix }}_{{ item.key }}.sql"
+      register: _apply_sql
+      loop: "{{ postgres_schemas | dict2items }}"
       loop_control:
-        label: "app2 ({{ loop.index }}/{{ postgres_schemas.app2 | length }})"
+        label: "{{ item.key }}"
+      changed_when: >
+        ('CREATE TABLE' in (_apply_sql.stdout | default(''))) or
+        ('INSERT 0' in (_apply_sql.stdout | default('')) and
+         'INSERT 0 0' not in (_apply_sql.stdout | default('')))
       tags:
         - postgres
         - schema
-
-    - name: Criar tabelas no database awx
-      become_user: postgres
-      community.postgresql.postgresql_query:
-        db: awx
-        query: "{{ item }}"
-      loop: "{{ postgres_schemas.awx }}"
-      loop_control:
-        label: "awx ({{ loop.index }}/{{ postgres_schemas.awx | length }})"
-      tags:
-        - postgres
-        - schema
-
-    # ── Dados de teste (idempotentes via ON CONFLICT) ────────────────────────
-    - name: Popular dados de teste no database app1
-      become_user: postgres
-      community.postgresql.postgresql_query:
-        db: app1
-        query: "{{ item.query }}"
-      loop: "{{ postgres_seed_data.app1 }}"
-      loop_control:
-        label: "app1 seed {{ loop.index }}"
-      tags:
-        - postgres
         - seed
 
-    - name: Popular dados de teste no database app2
+    - name: Remover scripts SQL temporarios
       become_user: postgres
-      community.postgresql.postgresql_query:
-        db: app2
-        query: "{{ item.query }}"
-      loop: "{{ postgres_seed_data.app2 }}"
+      ansible.builtin.file:
+        path: "{{ sql_tmp_prefix }}_{{ item.key }}.sql"
+        state: absent
+      loop: "{{ postgres_schemas | dict2items }}"
       loop_control:
-        label: "app2 seed {{ loop.index }}"
+        label: "{{ item.key }}"
       tags:
         - postgres
-        - seed
-
-    - name: Popular dados de teste no database awx
-      become_user: postgres
-      community.postgresql.postgresql_query:
-        db: awx
-        query: "{{ item.query }}"
-      loop: "{{ postgres_seed_data.awx }}"
-      loop_control:
-        label: "awx seed {{ loop.index }}"
-      tags:
-        - postgres
-        - seed
-
-    - name: Conceder SELECT ao readonly_user em todas as tabelas existentes
-      become_user: postgres
-      community.postgresql.postgresql_privs:
-        database: "{{ item }}"
-        roles: readonly_user
-        type: table
-        objs: ALL_IN_SCHEMA
-        schema: public
-        privs: SELECT
-        state: present
-      loop:
-        - app1
-        - app2
-        - awx
-      tags:
-        - postgres
-        - grants
+        - cleanup
 
     # ── Validacao pos-implementacao (counts) ─────────────────────────────────
     - name: Validar contagem de linhas — app1.users
       become_user: postgres
-      community.postgresql.postgresql_query:
-        db: app1
-        query: "SELECT COUNT(*) AS total FROM users"
+      ansible.builtin.command:
+        argv: [psql, -d, app1, -tAc, "SELECT COUNT(*) FROM users"]
       register: _count_app1_users
       changed_when: false
       tags:
@@ -365,9 +367,8 @@
 
     - name: Validar contagem de linhas — app1.orders
       become_user: postgres
-      community.postgresql.postgresql_query:
-        db: app1
-        query: "SELECT COUNT(*) AS total FROM orders"
+      ansible.builtin.command:
+        argv: [psql, -d, app1, -tAc, "SELECT COUNT(*) FROM orders"]
       register: _count_app1_orders
       changed_when: false
       tags:
@@ -376,9 +377,8 @@
 
     - name: Validar contagem de linhas — app2.categories
       become_user: postgres
-      community.postgresql.postgresql_query:
-        db: app2
-        query: "SELECT COUNT(*) AS total FROM categories"
+      ansible.builtin.command:
+        argv: [psql, -d, app2, -tAc, "SELECT COUNT(*) FROM categories"]
       register: _count_app2_cats
       changed_when: false
       tags:
@@ -387,9 +387,8 @@
 
     - name: Validar contagem de linhas — app2.products
       become_user: postgres
-      community.postgresql.postgresql_query:
-        db: app2
-        query: "SELECT COUNT(*) AS total FROM products"
+      ansible.builtin.command:
+        argv: [psql, -d, app2, -tAc, "SELECT COUNT(*) FROM products"]
       register: _count_app2_prods
       changed_when: false
       tags:
@@ -398,9 +397,8 @@
 
     - name: Validar contagem de linhas — awx.hosts
       become_user: postgres
-      community.postgresql.postgresql_query:
-        db: awx
-        query: "SELECT COUNT(*) AS total FROM hosts"
+      ansible.builtin.command:
+        argv: [psql, -d, awx, -tAc, "SELECT COUNT(*) FROM hosts"]
       register: _count_awx_hosts
       changed_when: false
       tags:
@@ -409,9 +407,8 @@
 
     - name: Validar contagem de linhas — awx.jobs
       become_user: postgres
-      community.postgresql.postgresql_query:
-        db: awx
-        query: "SELECT COUNT(*) AS total FROM jobs"
+      ansible.builtin.command:
+        argv: [psql, -d, awx, -tAc, "SELECT COUNT(*) FROM jobs"]
       register: _count_awx_jobs
       changed_when: false
       tags:
@@ -429,12 +426,12 @@
           - "Usuarios de teste : app1_user, app2_user, awx_user, readonly_user"
           - "────────────────────────────────────────────────────────"
           - "Contagem de linhas:"
-          - "  app1.users       : {{ _count_app1_users.query_result[0].total }}"
-          - "  app1.orders      : {{ _count_app1_orders.query_result[0].total }}"
-          - "  app2.categories  : {{ _count_app2_cats.query_result[0].total }}"
-          - "  app2.products    : {{ _count_app2_prods.query_result[0].total }}"
-          - "  awx.hosts        : {{ _count_awx_hosts.query_result[0].total }}"
-          - "  awx.jobs         : {{ _count_awx_jobs.query_result[0].total }}"
+          - "  app1.users       : {{ _count_app1_users.stdout | trim }}"
+          - "  app1.orders      : {{ _count_app1_orders.stdout | trim }}"
+          - "  app2.categories  : {{ _count_app2_cats.stdout | trim }}"
+          - "  app2.products    : {{ _count_app2_prods.stdout | trim }}"
+          - "  awx.hosts        : {{ _count_awx_hosts.stdout | trim }}"
+          - "  awx.jobs         : {{ _count_awx_jobs.stdout | trim }}"
           - "────────────────────────────────────────────────────────"
       tags:
         - postgres
@@ -448,10 +445,10 @@
           stats_postgres_host: "{{ ansible_default_ipv4.address }}"
           stats_postgres_databases: "app1,app2,awx"
           stats_postgres_users_created: 4
-          stats_postgres_app1_users: "{{ _count_app1_users.query_result[0].total }}"
-          stats_postgres_app1_orders: "{{ _count_app1_orders.query_result[0].total }}"
-          stats_postgres_app2_products: "{{ _count_app2_prods.query_result[0].total }}"
-          stats_postgres_awx_jobs: "{{ _count_awx_jobs.query_result[0].total }}"
+          stats_postgres_app1_users: "{{ _count_app1_users.stdout | trim }}"
+          stats_postgres_app1_orders: "{{ _count_app1_orders.stdout | trim }}"
+          stats_postgres_app2_products: "{{ _count_app2_prods.stdout | trim }}"
+          stats_postgres_awx_jobs: "{{ _count_awx_jobs.stdout | trim }}"
           stats_phase: "postgres_post_install_ready"
       tags:
         - postgres
