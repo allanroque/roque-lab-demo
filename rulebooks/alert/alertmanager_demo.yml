@@ -11,13 +11,14 @@
 #   │ Alerta                   │ Severidade   │ Estratégia                    │
 #   ├──────────────────────────┼──────────────┼───────────────────────────────┤
 #   │ 1. HighFilesystemUsage   │ warning      │ Self-healing direto           │
-#   │ 2. SELinuxDisabled       │ security     │ Ticket ServiceNow (abrir/fechar) │
+#   │ 2. SELinuxDisabled       │ security     │ Workflow remediation SELinux  │
+#   │                          │              │ (resolve encerra incident)    │
 #   └──────────────────────────┴──────────────┴───────────────────────────────┘
 #
-# Job Templates chamados (todos em Organization: ROQUE):
-#   • SELF-HEALING-DISK-USAGE       — firing (disco)
-#   • SNOW-INCIDENT-CREATE          — firing (SELinux)
-#   • SNOW-INCIDENT-CLOSE           — resolved (SELinux)
+# AAP chamados (todos em Organization: ROQUE):
+#   • JT  SELF-HEALING-DISK-USAGE   — firing (disco)
+#   • WF  WF-REMEDIATION-SELINUX    — firing (SELinux) — remediação + incident
+#   • JT  SNOW-INCIDENT-CLOSE       — resolved (SELinux)
 #
 # Configuração esperada no Alertmanager (alertmanager/config.yml):
 #   route:
@@ -91,11 +92,13 @@
 
     # ═════════════════════════════════════════════════════════════════════
     # CENÁRIO 2 — SELinuxDisabled (security)
-    # Estratégia: TICKET no ServiceNow (abrir/fechar), sem auto-remediar
-    # Templates: SNOW-INCIDENT-CREATE (firing), SNOW-INCIDENT-CLOSE (resolved)
+    # Estratégia: WORKFLOW de remediação no AAP
+    #             (abre incident → remedia SELinux → valida)
+    # Workflow: WF-REMEDIATION-SELINUX (firing)
+    # Template: SNOW-INCIDENT-CLOSE    (resolved)
     # ═════════════════════════════════════════════════════════════════════
 
-    - name: "[C2·SEC] SELinux off → SNOW-INCIDENT-CREATE"
+    - name: "[C2·SEC] SELinux off → WF-REMEDIATION-SELINUX"
       condition: >-
         event.alert.labels.alertname == "SELinuxDisabled"
         and event.alert.status == "firing"
@@ -105,8 +108,8 @@
           - event.alert.labels.alertname
           - event.alert.labels.instance
       action:
-        run_job_template:
-          name: "SNOW-INCIDENT-CREATE"
+        run_workflow_template:
+          name: "WF-REMEDIATION-SELINUX"
           organization: "ROQUE"
           job_args:
             limit: "{{ event.meta.hosts }}"
@@ -118,7 +121,9 @@
               [SRE/EDA] SELinux desabilitado em {{ event.alert.labels.instance }}
             snow_description: >-
               Alerta automático do Prometheus/Alertmanager indica que o SELinux
-              foi desabilitado. Ação roteada pelo EDA para abertura de incident.
+              foi desabilitado. Workflow de remediação disparado via EDA:
+              abre incident no ServiceNow, executa remediação no host alvo e
+              valida o estado final do SELinux.
               Detalhes: {{ event.alert.annotations.description | default('') }}
             snow_urgency: "2"
             snow_impact: "2"
