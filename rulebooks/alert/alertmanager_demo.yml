@@ -15,7 +15,7 @@
 #   │ 3. SELinuxDisabled       │ security     │ Notificação + ticket (SNOW)   │
 #   └──────────────────────────┴──────────────┴───────────────────────────────┘
 #
-# Templates esperados no AAP (Organização: SRE):
+# Templates esperados no AAP (Organização: ROQUE):
 #   • LINUX-APACHE-RESTART          (Job Template)         — Cenário 1
 #   • WF-DISK-SPACE-APPROVAL        (Workflow Template)    — Cenário 2
 #     └── deve conter um "Approval Node" antes da task corretiva
@@ -69,7 +69,7 @@
       action:
         run_job_template:
           name: "LINUX-APACHE-RESTART"
-          organization: "SRE"
+          organization: "ROQUE"
           job_args:
             limit: "{{ event.meta.hosts }}"
           extra_vars:
@@ -111,7 +111,7 @@
       action:
         run_workflow_template:
           name: "WF-DISK-SPACE-APPROVAL"
-          organization: "SRE"
+          organization: "ROQUE"
           job_args:
             limit: "{{ event.meta.hosts }}"
           extra_vars:
@@ -154,7 +154,7 @@
       action:
         run_job_template:
           name: "SNOW-INCIDENT-CREATE"
-          organization: "SRE"
+          organization: "ROQUE"
           job_args:
             limit: "{{ event.meta.hosts }}"
           extra_vars:
@@ -181,7 +181,7 @@
       action:
         run_job_template:
           name: "SNOW-INCIDENT-RESOLVE"
-          organization: "SRE"
+          organization: "ROQUE"
           job_args:
             limit: "{{ event.meta.hosts }}"
           extra_vars:
