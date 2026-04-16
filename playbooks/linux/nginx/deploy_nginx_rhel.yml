@@ -5,17 +5,19 @@
 # Variáveis para Survey do AAP:
 #   website_repo: URL do repositório Git do website
 #   nginx_root:   Diretório raiz do Nginx (default: /usr/share/nginx/html)
+#   nginx_port:   Porta HTTP do Nginx (default: 80)
 # ============================================================
 - name: Deploy Parasol Insurance Website to RHEL 9 with Nginx
   hosts: all
   ignore_unreachable: true
   become: true
-  gather_facts: false
+  gather_facts: true
 
   vars:
     website_repo: "https://github.com/ansible-tmm/parasol-website.git"
     nginx_root: "/usr/share/nginx/html"
     temp_dir: "/tmp/parasol-website"
+    nginx_port: 80
 
   pre_tasks:
     - name: Aguardar SSH estar disponível
@@ -132,3 +134,68 @@
       tags:
         - nginx
         - service
+
+    # ── Validação e URL de acesso ────────────────────────────────────────────
+    - name: Aguardar Nginx responder na porta HTTP
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ nginx_port }}"
+        state: started
+        timeout: 30
+      tags:
+        - nginx
+        - validate
+
+    - name: Validar resposta HTTP do website (smoke test)
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ nginx_port }}/"
+        return_content: false
+        status_code: [200, 301, 302]
+      register: _nginx_smoke
+      retries: 5
+      delay: 3
+      until: _nginx_smoke.status is defined and _nginx_smoke.status in [200, 301, 302]
+      tags:
+        - nginx
+        - validate
+
+    - name: Construir URLs de acesso à aplicação
+      ansible.builtin.set_fact:
+        app_url_ip: "http://{{ ansible_default_ipv4.address }}{{ ':' ~ nginx_port if nginx_port | int != 80 else '' }}/"
+        app_url_fqdn: "http://{{ ansible_fqdn }}{{ ':' ~ nginx_port if nginx_port | int != 80 else '' }}/"
+      tags:
+        - nginx
+        - validate
+
+    - name: Exibir URL de acesso à aplicação
+      ansible.builtin.debug:
+        msg:
+          - "════════════════════════════════════════════════════════════"
+          - "   Parasol Insurance Website disponível!"
+          - "════════════════════════════════════════════════════════════"
+          - "   Host        : {{ ansible_fqdn }}"
+          - "   Porta       : {{ nginx_port }}"
+          - "   HTTP status : {{ _nginx_smoke.status }}"
+          - ""
+          - "   🌐 Acesse por IP   : {{ app_url_ip }}"
+          - "   🌐 Acesse por FQDN : {{ app_url_fqdn }}"
+          - "════════════════════════════════════════════════════════════"
+      tags:
+        - nginx
+        - report
+
+  post_tasks:
+    - name: Exportar URLs para workflow (set_stats)
+      ansible.builtin.set_stats:
+        aggregate: false
+        data:
+          stats_nginx_host: "{{ ansible_fqdn }}"
+          stats_nginx_ip: "{{ ansible_default_ipv4.address }}"
+          stats_nginx_port: "{{ nginx_port }}"
+          stats_app_url_ip: "{{ app_url_ip }}"
+          stats_app_url_fqdn: "{{ app_url_fqdn }}"
+          stats_http_status: "{{ _nginx_smoke.status }}"
+          stats_phase: "nginx_ready"
+      tags:
+        - nginx
+        - report

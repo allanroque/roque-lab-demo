@@ -8,20 +8,21 @@
 #   pos-implementacao e demos.
 #
 # Variaveis Survey AAP:
-#   - reset_test_data   : Se true, apaga e recria dados de teste (default: false)
-#   - default_password  : Senha default dos usuarios de teste (AAP credential)
+#   - reset_test_data   : yes/no — apaga e recria dados de teste (default: no)
+#   - default_password  : Senha dos usuarios de teste (obrigatorio no survey)
+#   - target_hosts      : grupo/pattern do play (default: postgres) — alinhar ao inventario
 #
-# Grupo alvo sugerido no inventario: postgresql
+# Job Template AAP: limit padrao "postgres" (grupo no inventario ROQUE).
 # ============================================================
 
 - name: Post-install PostgreSQL — criar bancos, usuarios e dados de teste
-  hosts: postgresql
+  hosts: "{{ target_hosts | default('postgres') }}"
   ignore_unreachable: true
   gather_facts: true
   become: true
 
   vars:
-    reset_test_data: false
+    reset_test_data: "no"
     default_password: ""
 
     # Databases a criar (owner = usuario da aplicacao)
@@ -157,6 +158,17 @@
               ('Deploy App',        'successful', NOW(), 'aroque'),
               ('Disk Cleanup EDA',  'successful', NOW(), 'system')
             ON CONFLICT DO NOTHING
+
+  pre_tasks:
+    - name: Validar senha dos usuarios de teste (survey)
+      ansible.builtin.assert:
+        that:
+          - default_password is defined
+          - (default_password | string | length) > 0
+        fail_msg: "Informe default_password no survey (senha dos usuarios app1_user, app2_user, awx_user, readonly_user)."
+      tags:
+        - postgres
+        - check
 
   tasks:
     # ── Sanity check ─────────────────────────────────────────────────────────
