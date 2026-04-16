@@ -1,166 +1,244 @@
 ---
 # =========================================================================
-# Playbook: Remediacao - Limpeza de disco
+# Playbook: Remediacao - Limpeza de disco (Self-Healing)
 # =========================================================================
+# Chamado pelo JT SELF-HEALING-DISK-USAGE via EDA quando
+# HighFilesystemUsage dispara (disco > 80%).
+#
+# O host alvo é controlado pelo LIMIT do AAP (não por variável).
+#
+# Fluxo:
+#   1. Coleta uso de disco inicial
+#   2. Varredura: encontra os maiores arquivos (ofensores)
+#   3. Limpeza:
+#      a) Trunca logs grandes em /var/log (> threshold)
+#      b) Remove arquivos antigos em /tmp e /var/tmp
+#      c) Limpa logs comprimidos/antigos
+#      d) Vacuum do journalctl
+#      e) Limpa cache do dnf
+#   4. Coleta uso de disco final
+#   5. Relatório completo (antes/depois + ofensores encontrados)
+#
 # Variaveis para AAP Survey:
-#   target_host       - Host ou grupo alvo (default: all)
-#   cleanup_tmp_days  - Dias para limpar /tmp (default: 7)
-#   cleanup_logs_days - Dias para limpar logs comprimidos (default: 30)
+#   cleanup_tmp_days       - Dias para limpar /tmp (default: 7)
+#   cleanup_logs_days      - Dias para limpar logs comprimidos (default: 30)
+#   log_truncate_mb        - Truncar logs maiores que N MB (default: 500)
+#   mountpoint             - Mountpoint alvo (default: /)
 # =========================================================================
-# Nota: Algumas tarefas utilizam ansible.builtin.shell para operacoes de
-# limpeza com find/delete e dnf clean, onde nao ha modulo equivalente
-# que atenda ao mesmo escopo. Todas possuem changed_when controlado.
-# =========================================================================
-- name: Remediacao - Limpeza de disco
-  hosts: "{{ target_host | default('all') }}"
+- name: Remediacao - Limpeza de disco (Self-Healing)
+  hosts: all
   ignore_unreachable: true
   become: true
   gather_facts: true
   vars:
     cleanup_tmp_days: 7
     cleanup_logs_days: 30
+    log_truncate_mb: 500
+    mountpoint: "/"
 
   tasks:
+    # ==================================================================
+    # FASE 1 — Coleta inicial
+    # ==================================================================
+
     - name: Coletar uso de disco inicial
-      ansible.builtin.command: "df -h /"
+      ansible.builtin.command: "df -h {{ mountpoint }}"
       register: initial_disk_raw
       changed_when: false
-      tags:
-        - remediation
-        - disk
-        - check
+      tags: [remediation, disk, check]
 
     - name: Extrair percentual de uso de disco inicial
       ansible.builtin.set_fact:
         initial_disk_usage: "{{ initial_disk_raw.stdout_lines[-1].split()[4] }}"
-      tags:
-        - remediation
-        - disk
+      tags: [remediation, disk]
 
     - name: Exibir uso de disco inicial
       ansible.builtin.debug:
-        msg: "Initial disk usage: {{ initial_disk_usage }}"
-      tags:
-        - remediation
-        - disk
-        - debug
+        msg: "Uso de disco ANTES da limpeza: {{ initial_disk_usage }} em {{ mountpoint }}"
+      tags: [remediation, disk, debug]
 
-    - name: Verificar existencia de artefato de demonstracao
-      ansible.builtin.stat:
-        path: /tmp/diskfiller.img
-      register: diskfiller_stat
-      tags:
-        - remediation
-        - disk
-        - check
+    # ==================================================================
+    # FASE 2 — Varredura de ofensores (top 20 maiores arquivos)
+    # ==================================================================
 
-    - name: Remover artefato de demonstracao se existir
-      ansible.builtin.file:
-        path: /tmp/diskfiller.img
-        state: absent
-      when: diskfiller_stat.stat.exists
-      register: diskfiller_removed
-      tags:
-        - remediation
-        - disk
-        - cleanup
+    - name: Encontrar os 20 maiores arquivos no filesystem
+      ansible.builtin.command: >
+        find {{ mountpoint }} -xdev -type f -printf '%s %p\n'
+      register: find_all_files
+      changed_when: false
+      failed_when: false
+      tags: [remediation, disk, scan]
 
-    - name: Informar sobre remocao do artefato de demonstracao
+    - name: Ordenar e extrair top 20 ofensores
+      ansible.builtin.set_fact:
+        top_offenders: >-
+          {{
+            find_all_files.stdout_lines
+            | sort(reverse=true)
+            | list
+            | first(20) if find_all_files.stdout_lines | length > 0 else []
+          }}
+      tags: [remediation, disk, scan]
+      ignore_errors: true
+
+    - name: Exibir top ofensores (maiores arquivos)
+      ansible.builtin.command: >
+        find {{ mountpoint }} -xdev -type f -size +100M -printf '%s\t%p\n'
+      register: large_files_raw
+      changed_when: false
+      failed_when: false
+      tags: [remediation, disk, scan]
+
+    - name: Listar arquivos maiores que 100 MB
       ansible.builtin.debug:
-        msg: "Removed /tmp/diskfiller.img: {{ diskfiller_removed.changed }}"
-      when: diskfiller_stat.stat.exists
-      tags:
-        - remediation
-        - disk
-        - debug
+        msg: "{{ large_files_raw.stdout_lines | default(['Nenhum arquivo > 100MB encontrado']) }}"
+      tags: [remediation, disk, scan]
 
-    - name: Limpar arquivos antigos em /tmp com mais de dias {{ cleanup_tmp_days }}
-      ansible.builtin.shell: |
-        find /tmp -type f -atime +{{ cleanup_tmp_days }} -delete 2>/dev/null || true
-      changed_when: true
-      register: tmp_cleanup
-      tags:
-        - remediation
-        - disk
-        - cleanup
+    # ==================================================================
+    # FASE 3 — Limpeza
+    # ==================================================================
 
-    - name: Limpar arquivos antigos em /var/tmp com mais de dias {{ cleanup_tmp_days }}
-      ansible.builtin.shell: |
-        find /var/tmp -type f -atime +{{ cleanup_tmp_days }} -delete 2>/dev/null || true
-      changed_when: true
-      register: var_tmp_cleanup
-      tags:
-        - remediation
-        - disk
-        - cleanup
+    # --- 3a: Truncar logs grandes em /var/log ---
 
-    - name: Limpar logs comprimidos e antigos com mais de dias {{ cleanup_logs_days }}
-      ansible.builtin.shell: |
-        find /var/log -type f \( -name "*.gz" -o -name "*.old" \) -mtime +{{ cleanup_logs_days }} -delete 2>/dev/null || true
+    - name: Encontrar logs grandes em /var/log (maiores que {{ log_truncate_mb }} MB)
+      ansible.builtin.find:
+        paths: /var/log
+        recurse: true
+        file_type: file
+        size: "{{ log_truncate_mb }}m"
+      register: large_logs
+      tags: [remediation, disk, cleanup]
+
+    - name: Exibir logs grandes encontrados para limpeza
+      ansible.builtin.debug:
+        msg: >-
+          Logs grandes encontrados: {{ large_logs.files | map(attribute='path') | list }}
+          ({{ large_logs.files | map(attribute='size') | map('int') | map('regex_replace', '(.*)', '\1') | list }} bytes)
+      when: large_logs.matched > 0
+      tags: [remediation, disk, debug]
+
+    - name: Truncar logs grandes (zerar conteudo mantendo o arquivo)
+      ansible.builtin.command: "truncate -s 0 {{ item.path }}"
+      loop: "{{ large_logs.files }}"
+      loop_control:
+        label: "{{ item.path }} ({{ (item.size / 1048576) | round(1) }} MB)"
+      when: large_logs.matched > 0
+      register: truncated_logs
       changed_when: true
-      register: logs_cleanup
-      tags:
-        - remediation
-        - disk
-        - cleanup
+      tags: [remediation, disk, cleanup]
+
+    # --- 3b: Limpar /tmp e /var/tmp ---
+
+    - name: Limpar arquivos antigos em /tmp (mais de {{ cleanup_tmp_days }} dias)
+      ansible.builtin.find:
+        paths: /tmp
+        age: "{{ cleanup_tmp_days }}d"
+        recurse: true
+        file_type: file
+      register: old_tmp_files
+      tags: [remediation, disk, cleanup]
+
+    - name: Remover arquivos antigos de /tmp
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ old_tmp_files.files }}"
+      loop_control:
+        label: "{{ item.path }}"
+      when: old_tmp_files.matched > 0
+      tags: [remediation, disk, cleanup]
+
+    - name: Limpar arquivos antigos em /var/tmp (mais de {{ cleanup_tmp_days }} dias)
+      ansible.builtin.find:
+        paths: /var/tmp
+        age: "{{ cleanup_tmp_days }}d"
+        recurse: true
+        file_type: file
+      register: old_var_tmp_files
+      tags: [remediation, disk, cleanup]
+
+    - name: Remover arquivos antigos de /var/tmp
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ old_var_tmp_files.files }}"
+      loop_control:
+        label: "{{ item.path }}"
+      when: old_var_tmp_files.matched > 0
+      tags: [remediation, disk, cleanup]
+
+    # --- 3c: Limpar logs comprimidos e antigos ---
+
+    - name: Encontrar logs comprimidos antigos em /var/log (mais de {{ cleanup_logs_days }} dias)
+      ansible.builtin.find:
+        paths: /var/log
+        patterns:
+          - "*.gz"
+          - "*.old"
+          - "*.bz2"
+          - "*.xz"
+        age: "{{ cleanup_logs_days }}d"
+        recurse: true
+        file_type: file
+      register: old_compressed_logs
+      tags: [remediation, disk, cleanup]
+
+    - name: Remover logs comprimidos antigos
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ old_compressed_logs.files }}"
+      loop_control:
+        label: "{{ item.path }}"
+      when: old_compressed_logs.matched > 0
+      tags: [remediation, disk, cleanup]
+
+    # --- 3d: Vacuum journalctl ---
 
     - name: Aplicar vacuum nos logs do journalctl (manter 7 dias)
       ansible.builtin.command: "journalctl --vacuum-time=7d"
       register: journalctl_vacuum
-      changed_when: "'Vacuuming done' in journalctl_vacuum.stdout or 'Deleted' in journalctl_stdout | default('')"
+      changed_when: "'Vacuuming done' in journalctl_vacuum.stdout or 'Deleted' in journalctl_vacuum.stdout"
       failed_when: false
-      tags:
-        - remediation
-        - disk
-        - cleanup
+      tags: [remediation, disk, cleanup]
 
-    - name: Limpar cache do gerenciador de pacotes
-      ansible.builtin.dnf:
-        autoremove: false
-        state: present
-        update_cache: true
-      changed_when: false
+    # --- 3e: Limpar cache do dnf ---
+
+    - name: Limpar cache do gerenciador de pacotes (dnf clean all)
+      ansible.builtin.command: "dnf clean all"
+      changed_when: true
       failed_when: false
-      tags:
-        - remediation
-        - disk
-        - cleanup
+      tags: [remediation, disk, cleanup]
+
+    # ==================================================================
+    # FASE 4 — Coleta final e relatorio
+    # ==================================================================
 
     - name: Coletar uso de disco final
-      ansible.builtin.command: "df -h /"
+      ansible.builtin.command: "df -h {{ mountpoint }}"
       register: final_disk_raw
       changed_when: false
-      tags:
-        - remediation
-        - disk
-        - check
+      tags: [remediation, disk, check]
 
     - name: Extrair percentual de uso de disco final
       ansible.builtin.set_fact:
         final_disk_usage: "{{ final_disk_raw.stdout_lines[-1].split()[4] }}"
-      tags:
-        - remediation
-        - disk
+      tags: [remediation, disk]
 
-    - name: Exibir uso de disco final
-      ansible.builtin.debug:
-        msg: "Final disk usage: {{ final_disk_usage }}"
-      tags:
-        - remediation
-        - disk
-        - debug
-
-    - name: Exibir relatorio de limpeza de disco
+    - name: Exibir relatorio completo de limpeza de disco
       ansible.builtin.debug:
         msg:
-          - "=== DISK CLEANUP REPORT ==="
-          - "Initial usage: {{ initial_disk_usage }}"
-          - "Final usage: {{ final_disk_usage }}"
-          - "Demo artifact removed: {{ diskfiller_removed.changed | default(false) }}"
-          - "Temp files cleaned: /tmp and /var/tmp"
-          - "Old logs cleaned: compressed and .old files"
-          - "Journalctl vacuum: {{ journalctl_vacuum.stdout | default('completed') }}"
-      tags:
-        - remediation
-        - disk
-        - report
+          - "========================================="
+          - "     DISK CLEANUP REPORT (Self-Healing)"
+          - "========================================="
+          - "Host:           {{ inventory_hostname }}"
+          - "Mountpoint:     {{ mountpoint }}"
+          - "Uso ANTES:      {{ initial_disk_usage }}"
+          - "Uso DEPOIS:     {{ final_disk_usage }}"
+          - "-----------------------------------------"
+          - "Logs truncados: {{ large_logs.matched | default(0) }} arquivo(s)"
+          - "Tmp limpos:     {{ old_tmp_files.matched | default(0) }} + {{ old_var_tmp_files.matched | default(0) }} arquivo(s)"
+          - "Logs antigos:   {{ old_compressed_logs.matched | default(0) }} arquivo(s) comprimidos"
+          - "Journalctl:     {{ journalctl_vacuum.stdout_lines | default(['N/A']) | last }}"
+          - "========================================="
+      tags: [remediation, disk, report]
