@@ -7,13 +7,15 @@
 #   - Survey opcional para `firewall_protocol`, `firewall_zone`, `firewall_state`
 #   - Final imprime o `firewall-cmd --list-all` da zona
 #
-# Variáveis (pensadas para Survey do AAP):
-#   target_hosts       : grupo/host alvo (default: all)
-#   firewall_ports     : portas em CSV. Ex: "80,8080" ou "80/tcp,443/tcp,53/udp"
-#   firewall_protocol  : tcp|udp — usado quando a porta vem sem protocolo (default: tcp)
-#   firewall_zone      : zona do firewalld (default: public)
-#   firewall_state     : enabled|disabled — liberar ou remover a regra (default: enabled)
-#   firewall_permanent : true|false — manter entre reboots (default: true)
+# Variáveis (Survey AAP — JOB LINUX-FIREWALL-MANAGE-PORTS):
+#   Var                  Default              Survey
+#   -------------------  -------------------  ----------------------------------
+#   target_hosts         all                  multiplechoice (AAP: grupos+hosts INV-ROQUE-LAB)
+#   firewall_ports       80,8080,8081       text (CSV; "80,8080" ou "80/tcp,443/tcp")
+#   firewall_protocol    tcp                  multiplechoice tcp|udp (porta sem /proto)
+#   firewall_zone        public               text
+#   firewall_state       enabled              multiplechoice enabled|disabled
+#   firewall_permanent   true                 multiplechoice true|false
 # ──────────────────────────────────────────────────────────────────────────────
 
 - name: Firewalld — Gerenciar liberação de portas

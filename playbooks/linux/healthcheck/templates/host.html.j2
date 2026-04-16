@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ host_data.identity.hostname }} · Healthcheck</title>
+  <meta name="description" content="Healthcheck dinâmico — Ansible Automation Platform">
+  <style>
+    *,*::before,*::after { margin:0; padding:0; box-sizing:border-box; }
+    :root {
+      --bg: #0B1020;
+      --bg-2: #0E152E;
+      --surface: #111A38;
+      --surface-2: #18224A;
+      --border: #22305E;
+      --border-strong: #3A4B83;
+      --text: #EEF2FF;
+      --text-muted: #8A94BE;
+      --accent: #EE0000;
+      --accent-2: #FF6B35;
+      --success: #00D4A6;
+      --warn: #FFB347;
+      --danger: #FF5577;
+      --cyan: #21C6F0;
+      --gradient: linear-gradient(135deg, #EE0000 0%, #FF6B35 60%, #FFB347 100%);
+      --gradient-soft: linear-gradient(135deg, rgba(238,0,0,0.18), rgba(255,107,53,0.08));
+    }
+    html,body { height: 100%; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+    }
+    body::before {
+      content: ""; position: fixed; inset: 0;
+      background:
+        radial-gradient(ellipse 60rem 30rem at 80% -10%, rgba(238,0,0,0.18), transparent 60%),
+        radial-gradient(ellipse 50rem 25rem at 10% 0%, rgba(33,198,240,0.10), transparent 60%),
+        radial-gradient(ellipse 40rem 30rem at 50% 110%, rgba(255,107,53,0.10), transparent 60%);
+      pointer-events: none; z-index: 0;
+    }
+    body::after {
+      content: ""; position: fixed; inset: 0;
+      background-image:
+        linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: radial-gradient(ellipse at center, black 40%, transparent 80%);
+      -webkit-mask-image: radial-gradient(ellipse at center, black 40%, transparent 80%);
+      pointer-events: none; z-index: 0;
+    }
+    .container {
+      max-width: 1280px; margin: 0 auto;
+      padding: 2.5rem 1.5rem 4rem;
+      position: relative; z-index: 1;
+      animation: fadeUp 0.6s cubic-bezier(.2,.7,.2,1);
+    }
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0);} }
+
+    .header {
+      display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 1rem; margin-bottom: 2rem;
+    }
+    .brand { display: flex; align-items: center; gap: 0.875rem; }
+    .brand-logo {
+      width: 44px; height: 44px; border-radius: 12px;
+      background: var(--gradient);
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 10px 28px rgba(238,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.2);
+    }
+    .brand-text h2 { font-size: 1rem; font-weight: 700; letter-spacing: -0.01em; line-height: 1.2; }
+    .brand-text p { font-size: 0.8125rem; color: var(--text-muted); }
+
+    .back-link {
+      color: var(--text-muted); text-decoration: none; font-size: 0.875rem;
+      display: inline-flex; align-items: center; gap: 0.375rem;
+      padding: 0.5rem 0.875rem; border: 1px solid var(--border); border-radius: 8px;
+      background: var(--surface);
+      transition: border-color .2s, color .2s;
+    }
+    .back-link:hover { border-color: var(--border-strong); color: var(--text); }
+
+    .hero { margin-bottom: 2.5rem; max-width: 880px; }
+    .hero .eyebrow {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      padding: 0.375rem 0.75rem;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 999px;
+      font-size: 0.75rem; font-weight: 600; color: var(--text-muted);
+      letter-spacing: 0.05em; text-transform: uppercase; margin-bottom: 1rem;
+    }
+    .hero .eyebrow .dot { width: 6px; height: 6px; background: var(--accent-2); border-radius: 50%;}
+    .hero h1 {
+      font-size: clamp(2rem, 4vw, 3.25rem); line-height: 1.05;
+      font-weight: 800; letter-spacing: -0.025em; margin-bottom: 0.75rem;
+    }
+    .hero h1 .gradient {
+      background: var(--gradient);
+      -webkit-background-clip: text; background-clip: text;
+      -webkit-text-fill-color: transparent; display: inline-block;
+    }
+    .hero .lede { font-size: 1rem; color: var(--text-muted); max-width: 720px; }
+
+    .status-pill {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      padding: 0.375rem 0.875rem; border-radius: 999px;
+      font-size: 0.75rem; font-weight: 600;
+    }
+    .pill-success { background: rgba(0,212,166,0.08); border:1px solid rgba(0,212,166,0.28); color: var(--success);}
+    .pill-warn    { background: rgba(255,179,71,0.1);  border:1px solid rgba(255,179,71,0.32);  color: var(--warn);   }
+    .pill-danger  { background: rgba(255,85,119,0.1);  border:1px solid rgba(255,85,119,0.32);  color: var(--danger); }
+
+    .status-dot {
+      width: 0.5rem; height: 0.5rem; border-radius: 50%;
+      background: currentColor; box-shadow: 0 0 0 4px rgba(0,212,166,0.15);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%,100% { opacity: 1; transform: scale(1); }
+      50%     { opacity: 0.7; transform: scale(1.3); }
+    }
+
+    /* ── Cards grid ─────────────────────────────────────────────────── */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 0.875rem; margin-bottom: 2rem;
+    }
+    .card {
+      position: relative; background: var(--surface);
+      border: 1px solid var(--border); border-radius: 14px;
+      padding: 1.125rem 1.25rem; overflow: hidden;
+      transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+    }
+    .card:hover { transform: translateY(-2px); border-color: var(--border-strong); box-shadow: 0 20px 40px -20px rgba(0,0,0,0.5); }
+    .card::before {
+      content: ""; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+      background: var(--gradient); opacity: 0.7;
+    }
+    .card-label {
+      display: flex; align-items: center; gap: 0.5rem;
+      font-size: 0.6875rem; font-weight: 700; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 0.5rem;
+    }
+    .card-label svg { width: 14px; height: 14px; }
+    .card-value { font-size: 1.125rem; font-weight: 700; color: var(--text); word-break: break-all; font-variant-numeric: tabular-nums; }
+    .card-sub { font-size: 0.8125rem; color: var(--text-muted); font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; margin-top: 0.25rem; }
+
+    /* ── Sections ───────────────────────────────────────────────────── */
+    .section {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 16px; padding: 1.5rem; margin-bottom: 1.25rem;
+    }
+    .section h3 {
+      font-size: 0.875rem; font-weight: 700; letter-spacing: 0.05em;
+      text-transform: uppercase; color: var(--text-muted); margin-bottom: 1rem;
+      display: flex; align-items: center; gap: 0.5rem;
+    }
+    .section h3 .tag {
+      margin-left: auto;
+      font-size: 0.6875rem; font-weight: 700; color: var(--text-muted);
+      padding: 0.125rem 0.5rem; border-radius: 6px;
+      background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+      letter-spacing: 0.04em;
+    }
+
+    .sections-grid {
+      display: grid; gap: 1.25rem;
+      grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+    }
+
+    table {
+      width: 100%; border-collapse: collapse;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 0.8125rem;
+    }
+    table th {
+      text-align: left; font-weight: 600; font-size: 0.6875rem;
+      color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em;
+      padding: 0.5rem 0.625rem; border-bottom: 1px solid var(--border);
+    }
+    table td {
+      padding: 0.5rem 0.625rem; color: var(--text);
+      border-bottom: 1px dashed rgba(255,255,255,0.04);
+    }
+    table tr:last-child td { border-bottom: none; }
+    table tr:hover td { background: rgba(255,255,255,0.02); }
+    .num { text-align: right; font-variant-numeric: tabular-nums; color: var(--cyan); }
+    .muted { color: var(--text-muted); }
+
+    .chips { display: flex; gap: 0.375rem; flex-wrap: wrap; }
+    .chip {
+      display: inline-flex; align-items: center; gap: 0.25rem;
+      padding: 0.25rem 0.625rem; font-size: 0.75rem;
+      background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+      border-radius: 999px; color: var(--cyan);
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    }
+    .chip-ok       { color: var(--success); border-color: rgba(0,212,166,0.3); }
+    .chip-warn     { color: var(--warn);    border-color: rgba(255,179,71,0.3); }
+    .chip-disabled { color: var(--warn);    border-color: rgba(255,179,71,0.3); background: rgba(255,179,71,0.05); }
+
+    .bar {
+      position: relative; width: 100px; height: 6px;
+      background: rgba(255,255,255,0.05); border-radius: 999px; overflow: hidden;
+      display: inline-block; vertical-align: middle; margin-right: 0.5rem;
+    }
+    .bar::after {
+      content: ""; position: absolute; top: 0; left: 0; bottom: 0;
+      background: var(--gradient); border-radius: 999px;
+      width: var(--pct, 0%);
+    }
+
+    pre.raw {
+      background: rgba(0,0,0,0.25); border: 1px solid var(--border);
+      border-radius: 10px; padding: 0.875rem 1rem;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 0.8125rem; color: var(--text-muted);
+      overflow-x: auto; white-space: pre-wrap; word-break: break-all;
+      max-height: 220px;
+    }
+
+    .footer {
+      margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--border);
+      display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.75rem;
+      color: var(--text-muted); font-size: 0.8125rem;
+    }
+    .footer .kv { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; }
+    .footer .kv strong { color: var(--text); font-weight: 600; }
+    .heart { color: var(--accent); animation: beat 1.5s ease-in-out infinite; display: inline-block;}
+    @keyframes beat { 0%,100% { transform: scale(1);} 50% { transform: scale(1.15);} }
+
+    /* scrollbar discreto dentro de listas */
+    .scroll-y { max-height: 240px; overflow-y: auto; }
+    .scroll-y::-webkit-scrollbar { width: 6px; }
+    .scroll-y::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+
+    <div class="header">
+      <div class="brand">
+        <div class="brand-logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="#fff">
+            <path d="M12 2L2.5 20.5h4.6l2-4.3h5.8l2 4.3h4.6L12 2zm-2.2 11.3L12 8.5l2.2 4.8H9.8z"/>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <h2>Ansible Automation Platform</h2>
+          <p>Healthcheck dinâmico · SRE / Infra</p>
+        </div>
+      </div>
+      <a href="index.html" class="back-link">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        Voltar ao inventário
+      </a>
+    </div>
+
+    <div class="hero">
+      <span class="eyebrow">
+        <span class="dot"></span>
+        HC REPORT · {{ host_data.os.distribution }} {{ host_data.os.major }} · {{ host_data.hardware.virtualization_type }}
+      </span>
+      <h1>{{ host_data.identity.hostname }} <span class="gradient">online</span>.</h1>
+      <p class="lede">Último relatório coletado em <strong style="color:var(--text);">{{ host_data.collected_at }}</strong>. Uptime: {{ host_data.uptime.human }}.</p>
+      <div style="margin-top: 1rem; display:flex; gap:0.5rem; flex-wrap:wrap;">
+        {% if host_data.subscription.ok %}
+        <span class="status-pill pill-success"><span class="status-dot"></span> Subscrição Current</span>
+        {% else %}
+        <span class="status-pill pill-warn"><span class="status-dot"></span> Subscrição · revisar</span>
+        {% endif %}
+        <span class="status-pill pill-success"><span class="status-dot"></span> {{ host_data.services.count_active_enabled }} serviços running</span>
+        <span class="status-pill pill-success"><span class="status-dot"></span> {{ host_data.repositories | length }} repositórios habilitados</span>
+      </div>
+    </div>
+
+    <!-- Cards identidade ---------------------------------------------------- -->
+    <div class="grid">
+      <div class="card">
+        <div class="card-label">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="12" rx="2"/><line x1="6" y1="20" x2="18" y2="20"/><line x1="12" y1="16" x2="12" y2="20"/></svg>
+          Hostname
+        </div>
+        <div class="card-value">{{ host_data.identity.hostname }}</div>
+        <div class="card-sub">{{ host_data.identity.fqdn }}</div>
+      </div>
+      <div class="card">
+        <div class="card-label">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15 15 0 0 1 4 10 15 15 0 0 1-4 10 15 15 0 0 1-4-10 15 15 0 0 1 4-10z"/></svg>
+          Endereço de rede
+        </div>
+        <div class="card-value">{{ host_data.identity.ip }}</div>
+        <div class="card-sub">iface {{ host_data.identity.interface }} · gw {{ host_data.identity.gateway }}</div>
+      </div>
+      <div class="card">
+        <div class="card-label">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg>
+          Sistema operacional
+        </div>
+        <div class="card-value">{{ host_data.os.distribution }} {{ host_data.os.version }}</div>
+        <div class="card-sub">kernel {{ host_data.os.kernel }} · {{ host_data.os.architecture }}</div>
+      </div>
+      <div class="card">
+        <div class="card-label">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+          CPU · RAM
+        </div>
+        <div class="card-value">{{ host_data.hardware.cpus }} vCPU · {{ host_data.hardware.ram_gb }} GB</div>
+        <div class="card-sub">{{ host_data.hardware.vendor }} · {{ host_data.hardware.virtualization_type }}</div>
+      </div>
+      <div class="card">
+        <div class="card-label">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          Uptime
+        </div>
+        <div class="card-value">{{ host_data.uptime.human }}</div>
+        <div class="card-sub">{{ host_data.uptime.seconds }} s</div>
+      </div>
+      <div class="card">
+        <div class="card-label">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+          Vendor / Virt
+        </div>
+        <div class="card-value">{{ host_data.hardware.product }}</div>
+        <div class="card-sub">{{ host_data.hardware.virtualization_role }} · {{ host_data.hardware.virtualization_type }}</div>
+      </div>
+    </div>
+
+    <!-- Network / DNS ------------------------------------------------------- -->
+    <div class="sections-grid">
+      <div class="section">
+        <h3>Rede <span class="tag">interface · DNS</span></h3>
+        <table>
+          <tbody>
+            <tr><td class="muted">Interface</td><td>{{ host_data.identity.interface }}</td></tr>
+            <tr><td class="muted">MAC</td><td>{{ host_data.identity.mac }}</td></tr>
+            <tr><td class="muted">IP</td><td>{{ host_data.identity.ip }}</td></tr>
+            <tr><td class="muted">Máscara</td><td>{{ host_data.identity.netmask }}</td></tr>
+            <tr><td class="muted">Gateway</td><td>{{ host_data.identity.gateway }}</td></tr>
+            <tr><td class="muted">DNS</td><td>{{ host_data.identity.dns | join(', ') if host_data.identity.dns else '—' }}</td></tr>
+            <tr><td class="muted">Search</td><td>{{ host_data.identity.dns_search | join(', ') if host_data.identity.dns_search else '—' }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="section">
+        <h3>Storage <span class="tag">{{ host_data.storage | length }} mounts</span></h3>
+        <table>
+          <thead>
+            <tr><th>Mount</th><th>FS</th><th class="num">Tamanho</th><th class="num">Usado</th><th>%</th></tr>
+          </thead>
+          <tbody>
+          {% for m in host_data.storage %}
+            <tr>
+              <td>{{ m.mount }}</td>
+              <td class="muted">{{ m.fstype }}</td>
+              <td class="num">{{ m.size_gb }} GB</td>
+              <td class="num">{{ m.used_gb }} GB</td>
+              <td><span class="bar" style="--pct: {{ m.used_pct }}%"></span><span class="muted">{{ m.used_pct }}%</span></td>
+            </tr>
+          {% else %}
+            <tr><td colspan="5" class="muted">Nenhum mount coletado.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Subscrição + Repos -------------------------------------------------- -->
+    <div class="sections-grid">
+      <div class="section">
+        <h3>Subscrição Red Hat <span class="tag">subscription-manager</span></h3>
+        <pre class="raw">{{ host_data.subscription.status_raw | trim if host_data.subscription.status_raw else 'Sem dados.' }}</pre>
+        {% if host_data.subscription.identity_raw %}
+        <div style="margin-top:0.75rem; font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.06em;">identity</div>
+        <pre class="raw">{{ host_data.subscription.identity_raw | trim }}</pre>
+        {% endif %}
+      </div>
+
+      <div class="section">
+        <h3>Repositórios habilitados <span class="tag">{{ host_data.repositories | length }}</span></h3>
+        <div class="scroll-y">
+          <div class="chips">
+          {% for r in host_data.repositories %}
+            <span class="chip">{{ r.split()[0] if r.split() else r }}</span>
+          {% else %}
+            <span class="muted">Nenhum repositório encontrado.</span>
+          {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Serviços ------------------------------------------------------------ -->
+    <div class="sections-grid">
+      <div class="section">
+        <h3>Serviços ATIVOS + ENABLED <span class="tag">{{ host_data.services.count_active_enabled }}</span></h3>
+        <div class="scroll-y">
+          <div class="chips">
+          {% for s in host_data.services.active_enabled %}
+            <span class="chip chip-ok">● {{ s }}</span>
+          {% else %}
+            <span class="muted">Nenhum serviço nesta categoria.</span>
+          {% endfor %}
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h3>Serviços ATIVOS + DISABLED <span class="tag">{{ host_data.services.count_active_disabled }}</span></h3>
+        <div class="scroll-y">
+          <div class="chips">
+          {% for s in host_data.services.active_disabled %}
+            <span class="chip chip-disabled">▲ {{ s }}</span>
+          {% else %}
+            <span class="muted">Nenhum serviço nesta categoria.</span>
+          {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Top processos ------------------------------------------------------- -->
+    <div class="sections-grid">
+      <div class="section">
+        <h3>Top {{ host_data.top_processes.root | length }} processos · root</h3>
+        <table>
+          <thead><tr><th>USER</th><th class="num">PID</th><th class="num">CPU%</th><th class="num">MEM%</th><th>COMMAND</th></tr></thead>
+          <tbody>
+          {% for p in host_data.top_processes.root %}
+            <tr>
+              <td>{{ p.user }}</td>
+              <td class="num">{{ p.pid }}</td>
+              <td class="num">{{ p.cpu }}</td>
+              <td class="num">{{ p.mem }}</td>
+              <td>{{ p.command }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="5" class="muted">Sem processos.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="section">
+        <h3>Top {{ host_data.top_processes.nonroot | length }} processos · não-root</h3>
+        <table>
+          <thead><tr><th>USER</th><th class="num">PID</th><th class="num">CPU%</th><th class="num">MEM%</th><th>COMMAND</th></tr></thead>
+          <tbody>
+          {% for p in host_data.top_processes.nonroot %}
+            <tr>
+              <td>{{ p.user }}</td>
+              <td class="num">{{ p.pid }}</td>
+              <td class="num">{{ p.cpu }}</td>
+              <td class="num">{{ p.mem }}</td>
+              <td>{{ p.command }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="5" class="muted">Sem processos.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Footer -------------------------------------------------------------- -->
+    <div class="footer">
+      <div class="kv">
+        <strong>{{ host_data.identity.hostname }}</strong> · coletado em <strong>{{ host_data.collected_at }}</strong>
+      </div>
+      <div>
+        Powered by <strong style="color:var(--text);">Red Hat Ansible</strong>
+        <span class="heart" aria-hidden="true">♥</span>
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>

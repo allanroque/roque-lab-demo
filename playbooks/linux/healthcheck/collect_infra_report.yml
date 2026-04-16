@@ -1,0 +1,273 @@
+---
+# ──────────────────────────────────────────────────────────────────────────────
+# Healthcheck — Coleta de inventário dinâmico da infra
+#
+# Varre os hosts do grupo alvo (default: infra) e coleta:
+#   - Identidade:  hostname, fqdn, interface, ip, DNS
+#   - Sistema:     distribuição, versão, kernel, arquitetura, uptime
+#   - Hardware:    CPUs, RAM, storage, vendor/virtualização
+#   - Assinatura:  subscription-manager status, repositórios habilitados
+#   - Serviços:    ativos+enabled  e  ativos+disabled
+#   - Processos:   top 10 root  e  top 10 não-root (ordenado por CPU)
+#
+# Cada host gera um JSON e publica em {{ dashboard_host }} :
+#   /var/lib/hc-dashboard/data/<inventory_hostname>.json
+#
+# Depois basta rodar publish_dashboard_container.yml para subir o Apache
+# rootless em Podman no aap01.
+#
+# Variáveis (Survey AAP — JOB INFRA-HEALTHCHECK-COLLECT):
+#   Var             Default                   Survey
+#   --------------  ------------------------  --------------------------------
+#   target_hosts    infra                     text (grupo ou host)
+#   dashboard_host  aap01.aroque.com.br       text
+#   top_procs       10                        integer
+# ──────────────────────────────────────────────────────────────────────────────
+
+- name: Healthcheck — Coletar inventário dinâmico dos servidores de infra
+  hosts: "{{ target_hosts | default('infra') }}"
+  gather_facts: true
+  become: true
+
+  vars:
+    dashboard_host: "aap01.aroque.com.br"
+    dashboard_data_dir: "/var/lib/hc-dashboard/data"
+    top_procs: 10
+
+  tasks:
+    # ── Facts de serviços ────────────────────────────────────────────────────
+    - name: Coletar facts de serviços (systemd)
+      ansible.builtin.service_facts:
+      tags: [healthcheck, services]
+
+    # ── Subscrição Red Hat ───────────────────────────────────────────────────
+    - name: Coletar status da subscrição (subscription-manager)
+      ansible.builtin.command:
+        argv:
+          - subscription-manager
+          - status
+      register: _subs
+      changed_when: false
+      failed_when: false
+      tags: [healthcheck, subscription]
+
+    - name: "Coletar identidade da subscrição (identity)"
+      ansible.builtin.command:
+        argv:
+          - subscription-manager
+          - identity
+      register: _subs_id
+      changed_when: false
+      failed_when: false
+      tags: [healthcheck, subscription]
+
+    # ── Repositórios ─────────────────────────────────────────────────────────
+    - name: Coletar repositórios habilitados
+      ansible.builtin.command:
+        argv:
+          - dnf
+          - repolist
+          - --enabled
+          - -q
+      register: _repos
+      changed_when: false
+      failed_when: false
+      tags: [healthcheck, repos]
+
+    # ── Processos ────────────────────────────────────────────────────────────
+    - name: Coletar processos ordenados por uso de CPU
+      ansible.builtin.command:
+        argv:
+          - ps
+          - -eo
+          - user:32,pid,pcpu,pmem,comm
+          - --sort=-pcpu
+          - --no-headers
+      register: _ps
+      changed_when: false
+      tags: [healthcheck, processes]
+
+    - name: Parsear linhas de processos em lista de dicts
+      ansible.builtin.set_fact:
+        _procs_all: >-
+          {{
+            _procs_all | default([])
+            + [{
+                'user': _f[0],
+                'pid': _f[1] | int,
+                'cpu': _f[2] | float,
+                'mem': _f[3] | float,
+                'command': (_f[4] | default('')) | truncate(60, true)
+              }]
+          }}
+      loop: "{{ _ps.stdout_lines }}"
+      loop_control:
+        label: "{{ item[:60] }}"
+      vars:
+        _f: "{{ item.split(None, 4) }}"
+      tags: [healthcheck, processes]
+
+    - name: Separar top-N root e top-N não-root
+      ansible.builtin.set_fact:
+        _top_root: "{{ (_procs_all | selectattr('user', 'equalto', 'root') | list)[:top_procs | int] }}"
+        _top_nonroot: "{{ (_procs_all | rejectattr('user', 'equalto', 'root') | list)[:top_procs | int] }}"
+      tags: [healthcheck, processes]
+
+    # ── Storage resumido ─────────────────────────────────────────────────────
+    - name: Resumir storage (mounts persistentes)
+      ansible.builtin.set_fact:
+        _storage: >-
+          {{
+            (ansible_mounts | default([]))
+            | rejectattr('mount', 'match', '^/(proc|sys|run|dev|boot/efi)')
+            | map('combine', {})
+            | list
+            | map('ansible.builtin.combine', {})
+            | list
+          }}
+      tags: [healthcheck, storage]
+
+    - name: Montar storage simplificado (mount, fstype, tamanho, uso)
+      ansible.builtin.set_fact:
+        _storage_simple: >-
+          {{
+            _storage_simple | default([])
+            + [{
+                'mount': item.mount,
+                'device': item.device | default('?'),
+                'fstype': item.fstype | default('?'),
+                'size_gb': ((item.size_total | default(0)) / 1024 / 1024 / 1024) | round(1),
+                'used_gb': (((item.size_total | default(0)) - (item.size_available | default(0))) / 1024 / 1024 / 1024) | round(1),
+                'used_pct': (((item.size_total | default(0)) - (item.size_available | default(0))) / ((item.size_total | default(1)) | float) * 100) | round(1)
+              }]
+          }}
+      loop: "{{ _storage }}"
+      loop_control:
+        label: "{{ item.mount | default('?') }}"
+      tags: [healthcheck, storage]
+
+    # ── Serviços (ativos+enabled / ativos+disabled) ──────────────────────────
+    - name: Derivar listas de serviços (ativos+enabled e ativos+disabled)
+      ansible.builtin.set_fact:
+        _svc_active_enabled: >-
+          {{
+            (ansible_facts.services | default({}))
+            | dict2items
+            | selectattr('value.state', 'equalto', 'running')
+            | selectattr('value.status', 'equalto', 'enabled')
+            | map(attribute='key')
+            | sort
+            | list
+          }}
+        _svc_active_disabled: >-
+          {{
+            (ansible_facts.services | default({}))
+            | dict2items
+            | selectattr('value.state', 'equalto', 'running')
+            | selectattr('value.status', 'in', ['disabled', 'static', 'indirect'])
+            | map(attribute='key')
+            | sort
+            | list
+          }}
+      tags: [healthcheck, services]
+
+    # ── Monta o relatório final ──────────────────────────────────────────────
+    - name: Montar relatório consolidado do host
+      ansible.builtin.set_fact:
+        hc_report:
+          schema: "hc-report/v1"
+          collected_at: "{{ ansible_date_time.iso8601 }}"
+          inventory_hostname: "{{ inventory_hostname }}"
+          identity:
+            hostname: "{{ ansible_hostname }}"
+            fqdn: "{{ ansible_fqdn | default(inventory_hostname) }}"
+            interface: "{{ ansible_default_ipv4.interface | default('n/a') }}"
+            ip: "{{ ansible_default_ipv4.address | default('n/a') }}"
+            netmask: "{{ ansible_default_ipv4.netmask | default('n/a') }}"
+            gateway: "{{ ansible_default_ipv4.gateway | default('n/a') }}"
+            mac: "{{ ansible_default_ipv4.macaddress | default('n/a') }}"
+            dns: "{{ ansible_dns.nameservers | default([]) }}"
+            dns_search: "{{ ansible_dns.search | default([]) }}"
+          os:
+            distribution: "{{ ansible_distribution | default('?') }}"
+            version: "{{ ansible_distribution_version | default('?') }}"
+            major: "{{ ansible_distribution_major_version | default('?') }}"
+            kernel: "{{ ansible_kernel | default('?') }}"
+            architecture: "{{ ansible_architecture | default('?') }}"
+          uptime:
+            seconds: "{{ ansible_uptime_seconds | default(0) | int }}"
+            human: >-
+              {{ (ansible_uptime_seconds | default(0) | int) // 86400 }}d
+              {{ ((ansible_uptime_seconds | default(0) | int) % 86400) // 3600 }}h
+              {{ ((ansible_uptime_seconds | default(0) | int) % 3600) // 60 }}m
+          hardware:
+            cpus: "{{ ansible_processor_vcpus | default(ansible_processor_count) | default(0) | int }}"
+            ram_mb: "{{ ansible_memtotal_mb | default(0) | int }}"
+            ram_gb: "{{ ((ansible_memtotal_mb | default(0)) / 1024) | round(1) }}"
+            vendor: "{{ ansible_system_vendor | default('?') }}"
+            product: "{{ ansible_product_name | default('?') }}"
+            virtualization_type: "{{ ansible_virtualization_type | default('physical') }}"
+            virtualization_role: "{{ ansible_virtualization_role | default('host') }}"
+          storage: "{{ _storage_simple | default([]) }}"
+          subscription:
+            status_raw: "{{ _subs.stdout | default('') }}"
+            identity_raw: "{{ _subs_id.stdout | default('') }}"
+            ok: "{{ (_subs.rc | default(1)) == 0 and 'Overall Status: Current' in (_subs.stdout | default('')) }}"
+          repositories: "{{ _repos.stdout_lines | default([]) }}"
+          services:
+            active_enabled: "{{ _svc_active_enabled | default([]) }}"
+            active_disabled: "{{ _svc_active_disabled | default([]) }}"
+            count_active_enabled: "{{ (_svc_active_enabled | default([])) | length }}"
+            count_active_disabled: "{{ (_svc_active_disabled | default([])) | length }}"
+          top_processes:
+            root: "{{ _top_root | default([]) }}"
+            nonroot: "{{ _top_nonroot | default([]) }}"
+      tags: [healthcheck, report]
+
+    # ── Publicação: delega a escrita do JSON para o host do dashboard ────────
+    - name: Garantir diretório de dados no dashboard host
+      ansible.builtin.file:
+        path: "{{ dashboard_data_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      delegate_to: "{{ dashboard_host }}"
+      run_once: true
+      tags: [healthcheck, publish]
+
+    - name: Persistir relatório JSON no dashboard host
+      ansible.builtin.copy:
+        dest: "{{ dashboard_data_dir }}/{{ inventory_hostname }}.json"
+        content: "{{ hc_report | to_nice_json }}"
+        owner: root
+        group: root
+        mode: "0644"
+      delegate_to: "{{ dashboard_host }}"
+      tags: [healthcheck, publish]
+
+    # ── Debug rápido (resumo) ────────────────────────────────────────────────
+    - name: Resumo da coleta
+      ansible.builtin.debug:
+        msg:
+          - "Host         : {{ hc_report.identity.hostname }} ({{ hc_report.identity.fqdn }})"
+          - "IP/Iface     : {{ hc_report.identity.ip }} via {{ hc_report.identity.interface }}"
+          - "OS           : {{ hc_report.os.distribution }} {{ hc_report.os.version }} ({{ hc_report.os.kernel }})"
+          - "CPU / RAM    : {{ hc_report.hardware.cpus }} vCPU · {{ hc_report.hardware.ram_gb }} GB"
+          - "Vendor       : {{ hc_report.hardware.vendor }} / {{ hc_report.hardware.virtualization_type }}"
+          - "Assinatura   : {{ 'OK' if hc_report.subscription.ok else 'ATENÇÃO — ver subscription-manager status' }}"
+          - "Repos ativos : {{ hc_report.repositories | length }}"
+          - "Serv. active+enabled  : {{ hc_report.services.count_active_enabled }}"
+          - "Serv. active+disabled : {{ hc_report.services.count_active_disabled }}"
+          - "Top root     : {{ hc_report.top_processes.root | map(attribute='command') | list }}"
+          - "JSON publicado em {{ dashboard_host }}:{{ dashboard_data_dir }}/{{ inventory_hostname }}.json"
+      tags: [healthcheck, report]
+
+    - name: Exportar estatísticas para o Workflow
+      ansible.builtin.set_stats:
+        data:
+          hc_report_path: "{{ dashboard_data_dir }}/{{ inventory_hostname }}.json"
+          hc_report_host: "{{ inventory_hostname }}"
+          hc_report_ip: "{{ hc_report.identity.ip }}"
+        per_host: true
+      tags: [healthcheck, report]

@@ -46,3 +46,9 @@ collections/
 
 #mcp server
 .mcp.json
+
+#cursorrules
+.cursorrules
+
+#Documentos
+Demo_Runbook_AAP_SRE_60min.docx

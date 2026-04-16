@@ -1,0 +1,242 @@
+---
+# ──────────────────────────────────────────────────────────────────────────────
+# Healthcheck — Publicar Dashboard em container Apache (Podman)
+#
+# Lê todos os relatórios JSON gerados por collect_infra_report.yml em
+#   /var/lib/hc-dashboard/data/*.json
+# Renderiza um index.html e uma página por host (host_<name>.html)
+# Sobe o Apache rootless via Podman na porta escolhida (default 8182)
+# Libera a porta no firewalld (se ativo) e imprime a URL de acesso.
+#
+# Variáveis (Survey AAP — JOB INFRA-HEALTHCHECK-PUBLISH):
+#   Var                        Default                                          Survey
+#   -------------------------  -----------------------------------------------  -----------
+#   target_hosts               aap01.aroque.com.br                              text
+#   dashboard_port             8182                                             integer
+#   dashboard_container_name   hc-dashboard                                     text
+#   dashboard_image            registry.access.redhat.com/ubi9/httpd-24:latest  text
+#   open_firewall              true                                             multiplechoice
+# ──────────────────────────────────────────────────────────────────────────────
+
+- name: Healthcheck — Publicar dashboard em container Apache (Podman)
+  hosts: "{{ target_hosts | default('aap01.aroque.com.br') }}"
+  gather_facts: true
+  become: true
+
+  vars:
+    dashboard_data_dir: "/var/lib/hc-dashboard/data"
+    dashboard_www_dir: "/var/lib/hc-dashboard/www"
+    dashboard_port: 8182
+    dashboard_container_name: "hc-dashboard"
+    dashboard_image: "registry.access.redhat.com/ubi9/httpd-24:latest"
+    open_firewall: true
+
+  pre_tasks:
+    - name: Validar parâmetros
+      ansible.builtin.assert:
+        that:
+          - dashboard_port | int > 0
+          - dashboard_port | int < 65536
+          - dashboard_container_name | length > 0
+          - dashboard_image | length > 0
+        fail_msg: "Revise dashboard_port, dashboard_container_name e dashboard_image."
+      tags: [always]
+
+  tasks:
+    # ── Pacotes e diretórios ────────────────────────────────────────────────
+    - name: Garantir podman instalado
+      ansible.builtin.package:
+        name: podman
+        state: present
+      tags: [dashboard, packages]
+
+    - name: Criar diretórios do dashboard
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - "{{ dashboard_data_dir }}"
+        - "{{ dashboard_www_dir }}"
+      tags: [dashboard]
+
+    # ── Leitura dos JSONs coletados ─────────────────────────────────────────
+    - name: Localizar relatórios JSON coletados
+      ansible.builtin.find:
+        paths: "{{ dashboard_data_dir }}"
+        patterns: "*.json"
+        file_type: file
+      register: _hc_files
+      tags: [dashboard]
+
+    - name: Exigir que existam dados coletados
+      ansible.builtin.assert:
+        that:
+          - (_hc_files.files | default([])) | length > 0
+        fail_msg: >-
+          Nenhum arquivo em {{ dashboard_data_dir }}.
+          Rode antes o playbook playbooks/linux/healthcheck/collect_infra_report.yml.
+      tags: [dashboard]
+
+    - name: Carregar conteúdo dos relatórios
+      ansible.builtin.set_fact:
+        hc_hosts: >-
+          {{
+            hc_hosts | default([])
+            + [ (lookup('file', item.path) | from_json) ]
+          }}
+      loop: "{{ _hc_files.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      tags: [dashboard]
+
+    - name: Timestamp da publicação
+      ansible.builtin.set_fact:
+        generated_at: "{{ ansible_date_time.iso8601 }}"
+        dashboard_host: "{{ inventory_hostname }}"
+      tags: [dashboard]
+
+    # ── Renderização das páginas ────────────────────────────────────────────
+    - name: Renderizar index.html (lista de hosts + KPIs)
+      ansible.builtin.template:
+        src: templates/index.html.j2
+        dest: "{{ dashboard_www_dir }}/index.html"
+        owner: root
+        group: root
+        mode: "0644"
+      tags: [dashboard, render]
+
+    - name: Renderizar página individual por host
+      ansible.builtin.template:
+        src: templates/host.html.j2
+        dest: "{{ dashboard_www_dir }}/host_{{ item.inventory_hostname }}.html"
+        owner: root
+        group: root
+        mode: "0644"
+      vars:
+        host_data: "{{ item }}"
+      loop: "{{ hc_hosts }}"
+      loop_control:
+        label: "{{ item.inventory_hostname }}"
+      tags: [dashboard, render]
+
+    - name: Ajustar permissões para leitura pelo container
+      ansible.builtin.file:
+        path: "{{ dashboard_www_dir }}"
+        state: directory
+        recurse: true
+        mode: u=rwX,g=rX,o=rX
+      tags: [dashboard]
+
+    # ── Container Podman ────────────────────────────────────────────────────
+    - name: Remover container anterior (se existir)
+      ansible.builtin.command:
+        argv:
+          - podman
+          - rm
+          - -f
+          - "{{ dashboard_container_name }}"
+      register: _rm
+      changed_when: _rm.rc == 0
+      failed_when: false
+      tags: [dashboard, container]
+
+    - name: Pull da imagem base
+      ansible.builtin.command:
+        argv:
+          - podman
+          - pull
+          - "{{ dashboard_image }}"
+      register: _pull
+      changed_when: "'Writing manifest' in (_pull.stdout | default('')) or 'Storing signatures' in (_pull.stdout | default(''))"
+      tags: [dashboard, container]
+
+    - name: Subir container do dashboard (Apache rootless)
+      ansible.builtin.command:
+        argv:
+          - podman
+          - run
+          - -d
+          - --name
+          - "{{ dashboard_container_name }}"
+          - --restart
+          - unless-stopped
+          - -p
+          - "{{ dashboard_port }}:8080"
+          - -v
+          - "{{ dashboard_www_dir }}:/var/www/html:ro,Z"
+          - --label
+          - "managed_by=ansible"
+          - --label
+          - "app=hc-dashboard"
+          - "{{ dashboard_image }}"
+      register: _run
+      changed_when: _run.rc == 0
+      tags: [dashboard, container]
+
+    - name: Aguardar container responder
+      ansible.builtin.wait_for:
+        host: "127.0.0.1"
+        port: "{{ dashboard_port | int }}"
+        delay: 2
+        timeout: 30
+      tags: [dashboard, container]
+
+    # ── Firewall ────────────────────────────────────────────────────────────
+    - name: "Liberar porta {{ dashboard_port }}/tcp no firewalld"
+      ansible.posix.firewalld:
+        port: "{{ dashboard_port }}/tcp"
+        permanent: true
+        immediate: true
+        state: enabled
+      when:
+        - open_firewall | bool
+        - ansible_facts.services['firewalld.service'] is defined
+        - ansible_facts.services['firewalld.service']['state'] == 'running'
+      tags: [dashboard, firewall]
+
+    # ── Smoke test HTTP ─────────────────────────────────────────────────────
+    - name: Smoke test HTTP (local)
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ dashboard_port }}/"
+        status_code: [200, 403]
+        return_content: false
+      register: _smoke
+      retries: 5
+      delay: 2
+      until: _smoke.status in [200, 403]
+      tags: [dashboard, smoke]
+
+    # ── Banner final com URL ────────────────────────────────────────────────
+    - name: Calcular URLs de acesso
+      ansible.builtin.set_fact:
+        _dashboard_url_ip: "http://{{ ansible_default_ipv4.address }}:{{ dashboard_port }}/"
+        _dashboard_url_fqdn: "http://{{ ansible_fqdn }}:{{ dashboard_port }}/"
+      tags: [dashboard]
+
+    - name: Exportar URL para o Workflow
+      ansible.builtin.set_stats:
+        data:
+          stats_dashboard_url_ip: "{{ _dashboard_url_ip }}"
+          stats_dashboard_url_fqdn: "{{ _dashboard_url_fqdn }}"
+          stats_dashboard_port: "{{ dashboard_port }}"
+          stats_dashboard_hosts_count: "{{ hc_hosts | length }}"
+      tags: [dashboard]
+
+    - name: Banner — Dashboard publicado
+      ansible.builtin.debug:
+        msg:
+          - "=================================================================="
+          - "  HC DASHBOARD publicado em {{ ansible_fqdn }}"
+          - "=================================================================="
+          - "Hosts coletados : {{ hc_hosts | length }}"
+          - "Imagem          : {{ dashboard_image }}"
+          - "Container       : {{ dashboard_container_name }} (porta host {{ dashboard_port }})"
+          - "------------------------------------------------------------------"
+          - "Acesso via IP   : {{ _dashboard_url_ip }}"
+          - "Acesso via FQDN : {{ _dashboard_url_fqdn }}"
+          - "Status HTTP     : {{ _smoke.status | default('?') }}"
+          - "=================================================================="
+      tags: [dashboard]
