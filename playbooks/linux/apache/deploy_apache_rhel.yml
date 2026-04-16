@@ -39,6 +39,25 @@
         - apache
         - install
 
+    # ── Auto-heal: se /etc/httpd foi apagado fora do RPM, reinstalar ────────
+    - name: Verificar se httpd.conf existe (detectar configs removidos)
+      ansible.builtin.stat:
+        path: /etc/httpd/conf/httpd.conf
+      register: _httpd_conf_stat
+      tags:
+        - apache
+        - install
+
+    - name: Reinstalar httpd/mod_ssl se configs foram removidos fora do RPM
+      ansible.builtin.command:
+        cmd: dnf reinstall -y httpd mod_ssl
+      register: _httpd_reinstall
+      when: not _httpd_conf_stat.stat.exists
+      changed_when: _httpd_reinstall.rc == 0
+      tags:
+        - apache
+        - install
+
     # ── Configuracao ─────────────────────────────────────────────────────────
     - name: Configurar porta do Apache
       ansible.builtin.lineinfile:

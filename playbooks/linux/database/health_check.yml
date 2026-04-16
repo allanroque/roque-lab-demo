@@ -471,6 +471,46 @@
         - healthcheck
 
     # ====== Web (Apache + templates) ======
+    - name: Instalar Apache httpd (se ainda não estiver instalado)
+      ansible.builtin.dnf:
+        name: httpd
+        state: present
+      tags:
+        - web
+        - healthcheck
+
+    - name: Verificar se httpd.conf existe (detectar configs removidos)
+      ansible.builtin.stat:
+        path: /etc/httpd/conf/httpd.conf
+      register: _httpd_conf_stat
+      tags:
+        - web
+        - healthcheck
+
+    - name: Reinstalar httpd se configs foram apagados fora do RPM # noqa: command-instead-of-module
+      ansible.builtin.command:
+        cmd: dnf reinstall -y httpd
+      register: _httpd_reinstall
+      when: not _httpd_conf_stat.stat.exists
+      changed_when: _httpd_reinstall.rc == 0
+      tags:
+        - web
+        - healthcheck
+
+    - name: Abrir porta do Apache no firewalld (se estiver ativo)
+      ansible.posix.firewalld:
+        port: "{{ httpd_port }}/tcp"
+        permanent: true
+        state: enabled
+        immediate: true
+      when:
+        - ansible_facts.services['firewalld.service'] is defined
+        - ansible_facts.services['firewalld.service']['state'] == 'running'
+      failed_when: false
+      tags:
+        - web
+        - healthcheck
+
     - name: Garantir que Apache (httpd) está iniciado e habilitado
       ansible.builtin.systemd:
         name: httpd
