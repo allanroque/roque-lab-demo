@@ -1,0 +1,213 @@
+---
+# ==============================================================================
+# EDA Rulebook — Alertmanager Demo (3 cenários, 3 estratégias de remediação)
+# ==============================================================================
+# Fluxo end-to-end:
+#   Prometheus  →  Alertmanager  →  EDA :5050  →  AAP (Job/Workflow Templates)
+#
+# Cenários cobertos nesta demo:
+#
+#   ┌──────────────────────────┬──────────────┬───────────────────────────────┐
+#   │ Alerta                   │ Severidade   │ Estratégia                    │
+#   ├──────────────────────────┼──────────────┼───────────────────────────────┤
+#   │ 1. HTTPServiceDown       │ critical     │ Auto-remediação direta        │
+#   │ 2. HighFilesystemUsage   │ warning      │ Workflow com aprovação        │
+#   │ 3. SELinuxDisabled       │ security     │ Notificação + ticket (SNOW)   │
+#   └──────────────────────────┴──────────────┴───────────────────────────────┘
+#
+# Templates esperados no AAP (Organização: SRE):
+#   • LINUX-APACHE-RESTART          (Job Template)         — Cenário 1
+#   • WF-DISK-SPACE-APPROVAL        (Workflow Template)    — Cenário 2
+#     └── deve conter um "Approval Node" antes da task corretiva
+#   • SNOW-INCIDENT-CREATE          (Job Template)         — Cenário 3 (firing)
+#   • SNOW-INCIDENT-RESOLVE         (Job Template)         — Cenário 3 (resolved)
+#
+# Configuração no Alertmanager (alertmanager.yml):
+#   route:
+#     receiver: eda-webhook
+#     group_by: ['alertname', 'instance']
+#   receivers:
+#     - name: 'eda-webhook'
+#       webhook_configs:
+#         - url: 'http://aap01.aroque.com.br:5050/endpoint'
+#           send_resolved: true
+# ==============================================================================
+
+- name: Alertmanager demo — 3 cenários com estratégias distintas de remediação
+  hosts: localhost
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Event source: recebe webhook do Alertmanager e explode o payload em
+  # um evento por alerta (data_alerts_path: alerts).
+  # ─────────────────────────────────────────────────────────────────────────
+  sources:
+    - ansible.eda.alertmanager:
+        host: 0.0.0.0
+        port: 5050
+        data_alerts_path: alerts
+        data_host_path: labels.instance
+        data_path_separator: .
+        skip_original_data: true
+
+  rules:
+
+    # ═════════════════════════════════════════════════════════════════════
+    # CENÁRIO 1 — HTTPServiceDown (critical)
+    # Estratégia: AUTO-REMEDIAÇÃO DIRETA
+    # Objetivo.: reiniciar o Apache no host afetado sem intervenção humana.
+    # ═════════════════════════════════════════════════════════════════════
+
+    - name: "[C1·CRIT] HTTP down → auto-restart Apache"
+      condition: >-
+        event.alert.labels.alertname == "HTTPServiceDown"
+        and event.alert.status == "firing"
+      throttle:
+        once_within: 5 minutes
+        group_by_attributes:
+          - event.alert.labels.alertname
+          - event.alert.labels.instance
+      action:
+        run_job_template:
+          name: "LINUX-APACHE-RESTART"
+          organization: "SRE"
+          job_args:
+            limit: "{{ event.meta.hosts }}"
+          extra_vars:
+            alert_name: "{{ event.alert.labels.alertname }}"
+            severity: "{{ event.alert.labels.severity | default('critical') }}"
+            host_alvo: "{{ event.alert.labels.instance }}"
+            summary: "{{ event.alert.annotations.summary | default('') }}"
+            description: "{{ event.alert.annotations.description | default('') }}"
+            trigger_source: "EDA+Alertmanager"
+
+    - name: "[C1·CRIT] HTTP restaurado → log de resolução"
+      condition: >-
+        event.alert.labels.alertname == "HTTPServiceDown"
+        and event.alert.status == "resolved"
+      action:
+        debug:
+          msg: >-
+            [RESOLVED] HTTPServiceDown em {{ event.meta.hosts }}
+            ({{ event.alert.labels.instance | default('?') }})
+
+    # ═════════════════════════════════════════════════════════════════════
+    # CENÁRIO 2 — HighFilesystemUsage (warning)
+    # Estratégia: WORKFLOW COM APROVAÇÃO
+    # Objetivo.: disparar workflow no AAP que pausa em um Approval Node
+    #           antes de executar o playbook de limpeza. Mostra governança
+    #           "human-in-the-loop" para ações que alteram dados em disco.
+    # ═════════════════════════════════════════════════════════════════════
+
+    - name: "[C2·WARN] Disco > 80% → workflow com approval"
+      condition: >-
+        event.alert.labels.alertname == "HighFilesystemUsage"
+        and event.alert.status == "firing"
+      throttle:
+        once_within: 10 minutes
+        group_by_attributes:
+          - event.alert.labels.alertname
+          - event.alert.labels.instance
+          - event.alert.labels.mountpoint
+      action:
+        run_workflow_template:
+          name: "WF-DISK-SPACE-APPROVAL"
+          organization: "SRE"
+          job_args:
+            limit: "{{ event.meta.hosts }}"
+          extra_vars:
+            alert_name: "{{ event.alert.labels.alertname }}"
+            severity: "{{ event.alert.labels.severity | default('warning') }}"
+            host_alvo: "{{ event.alert.labels.instance }}"
+            mountpoint: "{{ event.alert.labels.mountpoint | default('/') }}"
+            summary: "{{ event.alert.annotations.summary | default('') }}"
+            description: "{{ event.alert.annotations.description | default('') }}"
+            trigger_source: "EDA+Alertmanager"
+            approval_timeout_minutes: 60
+
+    - name: "[C2·WARN] Disco normalizado → log de resolução"
+      condition: >-
+        event.alert.labels.alertname == "HighFilesystemUsage"
+        and event.alert.status == "resolved"
+      action:
+        debug:
+          msg: >-
+            [RESOLVED] HighFilesystemUsage em {{ event.meta.hosts }}
+            mount={{ event.alert.labels.mountpoint | default('/') }}
+
+    # ═════════════════════════════════════════════════════════════════════
+    # CENÁRIO 3 — SELinuxDisabled (security)
+    # Estratégia: NOTIFICAÇÃO + TICKET (ServiceNow)
+    # Objetivo.: abrir incident no ServiceNow em vez de remediar sozinho,
+    #           pois mexer em SELinux pode afetar apps — fica no timão do
+    #           time de segurança. Fechamento automático ao resolver.
+    # ═════════════════════════════════════════════════════════════════════
+
+    - name: "[C3·SEC] SELinux off → abrir INC no ServiceNow"
+      condition: >-
+        event.alert.labels.alertname == "SELinuxDisabled"
+        and event.alert.status == "firing"
+      throttle:
+        once_within: 30 minutes
+        group_by_attributes:
+          - event.alert.labels.alertname
+          - event.alert.labels.instance
+      action:
+        run_job_template:
+          name: "SNOW-INCIDENT-CREATE"
+          organization: "SRE"
+          job_args:
+            limit: "{{ event.meta.hosts }}"
+          extra_vars:
+            alert_name: "{{ event.alert.labels.alertname }}"
+            severity: "{{ event.alert.labels.severity | default('security') }}"
+            host_alvo: "{{ event.alert.labels.instance }}"
+            snow_short_description: >-
+              [SRE/EDA] SELinux desabilitado em {{ event.alert.labels.instance }}
+            snow_description: >-
+              Alerta automático do Prometheus/Alertmanager indica que o SELinux
+              foi desabilitado. Ação roteada pelo EDA para abertura de incident.
+              Detalhes: {{ event.alert.annotations.description | default('') }}
+            snow_urgency: "2"
+            snow_impact: "2"
+            snow_category: "security"
+            snow_subcategory: "configuration_drift"
+            snow_assignment_group: "Security Operations"
+            trigger_source: "EDA+Alertmanager"
+
+    - name: "[C3·SEC] SELinux restaurado → fechar INC no ServiceNow"
+      condition: >-
+        event.alert.labels.alertname == "SELinuxDisabled"
+        and event.alert.status == "resolved"
+      action:
+        run_job_template:
+          name: "SNOW-INCIDENT-RESOLVE"
+          organization: "SRE"
+          job_args:
+            limit: "{{ event.meta.hosts }}"
+          extra_vars:
+            alert_name: "{{ event.alert.labels.alertname }}"
+            host_alvo: "{{ event.alert.labels.instance }}"
+            snow_close_notes: >-
+              SELinux re-habilitado em {{ event.alert.labels.instance }}.
+              Fechamento automático via EDA.
+            snow_close_code: "Solved (Permanently)"
+            trigger_source: "EDA+Alertmanager"
+
+    # ═════════════════════════════════════════════════════════════════════
+    # CATCH-ALL — Observabilidade de alertas não mapeados
+    # Qualquer alerta que não bateu nas regras acima é logado para análise.
+    # Útil durante a demo para mostrar que nenhum evento "se perde".
+    # ═════════════════════════════════════════════════════════════════════
+
+    - name: "[*] Alerta não roteado → log para análise"
+      condition: >-
+        event.alert is defined
+        and event.alert.labels.alertname not in
+            ["HTTPServiceDown", "HighFilesystemUsage", "SELinuxDisabled"]
+      action:
+        debug:
+          msg: >-
+            [UNROUTED] alert={{ event.alert.labels.alertname | default('?') }}
+            status={{ event.alert.status | default('?') }}
+            host={{ event.meta.hosts | default('?') }}
+            severity={{ event.alert.labels.severity | default('?') }}
