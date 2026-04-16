@@ -34,6 +34,9 @@
         name:
           - httpd
           - mod_ssl
+          - httpd-core
+          - httpd-filesystem
+          - httpd-tools
         state: present
       tags:
         - apache
@@ -44,26 +47,6 @@
       ansible.builtin.stat:
         path: /etc/httpd/conf/httpd.conf
       register: _httpd_conf_stat
-      tags:
-        - apache
-        - install
-
-    - name: Reinstalar httpd + subpacotes se configs foram removidos fora do RPM
-      # No RHEL 9, /etc/httpd/conf/httpd.conf pertence ao subpacote httpd-core
-      # (não ao meta httpd). Reinstalar toda a cadeia garante recriação dos %config.
-      ansible.builtin.command:
-        argv:
-          - dnf
-          - reinstall
-          - -y
-          - httpd
-          - httpd-core
-          - httpd-filesystem
-          - httpd-tools
-          - mod_ssl
-      register: _httpd_reinstall
-      when: not _httpd_conf_stat.stat.exists
-      changed_when: _httpd_reinstall.rc == 0
       tags:
         - apache
         - install
