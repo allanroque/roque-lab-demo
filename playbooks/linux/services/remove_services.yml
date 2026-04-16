@@ -1,0 +1,336 @@
+---
+# ──────────────────────────────────────────────────────────────────────────────
+# Services — Remoção COMPLETA de serviços web (Apache e/ou Nginx e afins)
+#
+# O que este playbook faz (full cleanup):
+#   1. service_facts para identificar o que existe de fato no host
+#   2. Para cada serviço alvo → systemd stop + disable + mask (opcional)
+#   3. Mata PIDs órfãos que ainda seguram as portas informadas
+#   4. Desinstala os pacotes (ansible.builtin.package state=absent)
+#   5. Remove diretórios de configuração (/etc/httpd, /etc/nginx...)
+#   6. Remove diretórios de conteúdo (/var/www, /usr/share/nginx/html...)
+#   7. Limpa PID files, sockets e logs
+#   8. daemon-reload + reset-failed + verificação final (porta livre)
+#   9. Banner com resumo
+#
+# Tolerante a host sem o serviço instalado — não falha se o systemd não
+# conhecer a unit ou o pacote não existir.
+#
+# Variáveis (Survey AAP — JOB LINUX-SERVICES-REMOVE):
+#   Var                  Default                 Survey
+#   -------------------  ----------------------  ----------------------------
+#   target_hosts         all                     multiplechoice
+#   services_remove      httpd,nginx             text (CSV de unit names systemd)
+#   packages_remove      httpd,mod_ssl,nginx     text (CSV de nomes de pacotes)
+#   ports_free           80,443                  text (CSV de portas TCP)
+#   remove_config_dirs   true                    multiplechoice true|false
+#   remove_content_dirs  true                    multiplechoice true|false
+#   mask_units           false                   multiplechoice true|false
+# ──────────────────────────────────────────────────────────────────────────────
+
+- name: Services — Remoção completa (stop + disable + purge)
+  hosts: "{{ target_hosts | default('all') }}"
+  gather_facts: true
+  become: true
+
+  vars:
+    services_remove: "httpd,nginx"
+    packages_remove: "httpd,mod_ssl,mod_http2,nginx,nginx-core,nginx-filesystem"
+    ports_free: "80,443"
+    remove_config_dirs: true
+    remove_content_dirs: true
+    mask_units: false
+
+    # Diretórios tocados quando remove_config_dirs=true
+    config_dirs:
+      - /etc/httpd
+      - /etc/nginx
+
+    # Diretórios tocados quando remove_content_dirs=true
+    content_dirs:
+      - /var/www
+      - /usr/share/nginx/html
+      - /var/lib/nginx
+
+    # PIDs e sockets que costumam sobrar
+    stale_files:
+      - /var/run/httpd/httpd.pid
+      - /run/httpd/httpd.pid
+      - /var/run/nginx.pid
+      - /run/nginx.pid
+      - /var/run/httpd
+      - /run/httpd
+
+    # Logs (opcional remover — deixamos preservados por padrão via logs_dirs vazio)
+    logs_dirs: []
+
+  pre_tasks:
+    - name: Normalizar listas (CSV → lista)
+      ansible.builtin.set_fact:
+        _services: "{{ (services_remove | string).split(',') | map('trim') | reject('equalto','') | list }}"
+        _packages: "{{ (packages_remove | string).split(',') | map('trim') | reject('equalto','') | list }}"
+        _ports:    "{{ (ports_free | string).split(',') | map('trim') | reject('equalto','') | list }}"
+      tags: [always]
+
+    - name: Coletar service_facts
+      ansible.builtin.service_facts:
+      tags: [services, remove]
+
+    - name: Mostrar escopo da remoção
+      ansible.builtin.debug:
+        msg:
+          - "Host          : {{ inventory_hostname }}"
+          - "Serviços      : {{ _services }}"
+          - "Pacotes       : {{ _packages }}"
+          - "Portas a livrar: {{ _ports }}"
+          - "Remove /etc/<svc>?: {{ remove_config_dirs }}"
+          - "Remove /var/www e afins?: {{ remove_content_dirs }}"
+          - "Mask units?   : {{ mask_units }}"
+      tags: [remove]
+
+  tasks:
+    # ── 1. Parar / desabilitar serviços ──────────────────────────────────────
+    - name: Parar serviços alvo (apenas os que existem)
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+      when: (item ~ '.service') in (ansible_facts.services | default({}))
+      loop: "{{ _services }}"
+      loop_control:
+        label: "stop {{ item }}"
+      failed_when: false
+      tags: [services, remove]
+
+    - name: Desabilitar serviços alvo no boot (apenas os que existem)
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: false
+      when: (item ~ '.service') in (ansible_facts.services | default({}))
+      loop: "{{ _services }}"
+      loop_control:
+        label: "disable {{ item }}"
+      failed_when: false
+      tags: [services, remove]
+
+    - name: "Mascarar unidades (impede reinicialização acidental)"
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        masked: true
+      when:
+        - mask_units | bool
+        - (item ~ '.service') in (ansible_facts.services | default({}))
+      loop: "{{ _services }}"
+      loop_control:
+        label: "mask {{ item }}"
+      failed_when: false
+      tags: [services, remove]
+
+    # ── 2. Processos órfãos nas portas ───────────────────────────────────────
+    - name: Identificar processos que ainda seguram as portas
+      ansible.builtin.command:
+        argv:
+          - ss
+          - -H
+          - -ltnp
+          - "sport = :{{ item }}"
+      register: _port_owners
+      changed_when: false
+      failed_when: false
+      loop: "{{ _ports }}"
+      loop_control:
+        label: "port {{ item }}"
+      tags: [processes, remove]
+
+    - name: Extrair PIDs dos processos encontrados
+      ansible.builtin.set_fact:
+        _orphan_pids: >-
+          {{
+            (_orphan_pids | default([]))
+            +
+            (
+              (item.stdout | default('')) | regex_findall('pid=(\d+)')
+            )
+          }}
+      loop: "{{ _port_owners.results }}"
+      loop_control:
+        label: "{{ item.item | default('?') }}"
+      tags: [processes, remove]
+
+    - name: Terminar processos órfãos (SIGTERM)
+      ansible.builtin.command:
+        argv: [kill, "-TERM", "{{ item }}"]
+      when: (_orphan_pids | default([])) | length > 0
+      loop: "{{ _orphan_pids | default([]) | unique }}"
+      loop_control:
+        label: "pid {{ item }}"
+      changed_when: true
+      failed_when: false
+      tags: [processes, remove]
+
+    - name: "Aguardar 2s para SIGTERM surtir efeito"
+      ansible.builtin.pause:
+        seconds: 2
+      when: (_orphan_pids | default([])) | length > 0
+      tags: [processes, remove]
+
+    - name: Forçar término de sobreviventes (SIGKILL)
+      ansible.builtin.command:
+        argv: [kill, "-KILL", "{{ item }}"]
+      when: (_orphan_pids | default([])) | length > 0
+      loop: "{{ _orphan_pids | default([]) | unique }}"
+      loop_control:
+        label: "pid {{ item }}"
+      changed_when: true
+      failed_when: false
+      tags: [processes, remove]
+
+    # ── 3. Desinstalar pacotes ───────────────────────────────────────────────
+    - name: Desinstalar pacotes web
+      ansible.builtin.package:
+        name: "{{ _packages }}"
+        state: absent
+      register: _pkg_remove
+      failed_when: false
+      tags: [packages, remove]
+
+    # ── 4. Remover arquivos stale (PIDs, sockets) ────────────────────────────
+    - name: Remover PID files e sockets stale
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ stale_files }}"
+      loop_control:
+        label: "{{ item }}"
+      tags: [cleanup, remove]
+
+    # ── 5. Remover diretórios de configuração ────────────────────────────────
+    - name: "Remover diretórios de configuração ({{ config_dirs | join(', ') }})"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      when: remove_config_dirs | bool
+      loop: "{{ config_dirs }}"
+      loop_control:
+        label: "{{ item }}"
+      tags: [cleanup, remove]
+
+    # ── 6. Remover diretórios de conteúdo ────────────────────────────────────
+    - name: "Remover diretórios de conteúdo ({{ content_dirs | join(', ') }})"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      when: remove_content_dirs | bool
+      loop: "{{ content_dirs }}"
+      loop_control:
+        label: "{{ item }}"
+      tags: [cleanup, remove]
+
+    # ── 7. systemd limpeza ───────────────────────────────────────────────────
+    - name: daemon-reload do systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+      tags: [services, remove]
+
+    - name: reset-failed do systemd
+      ansible.builtin.command:
+        argv: [systemctl, reset-failed]
+      changed_when: false
+      failed_when: false
+      tags: [services, remove]
+
+    # ── 8. Liberar regras de firewall (best effort) ──────────────────────────
+    - name: "Remover regras permanentes das portas no firewalld"
+      ansible.posix.firewalld:
+        port: "{{ item }}/tcp"
+        permanent: true
+        immediate: true
+        state: disabled
+      when:
+        - ansible_facts.services['firewalld.service'] is defined
+        - ansible_facts.services['firewalld.service']['state'] == 'running'
+      loop: "{{ _ports }}"
+      loop_control:
+        label: "{{ item }}/tcp"
+      failed_when: false
+      tags: [firewall, remove]
+
+  post_tasks:
+    # ── 9. Verificação final ────────────────────────────────────────────────
+    - name: "Verificar que as portas ficaram livres"
+      ansible.builtin.command:
+        argv:
+          - ss
+          - -H
+          - -ltn
+          - "sport = :{{ item }}"
+      register: _verify_ports
+      changed_when: false
+      failed_when: false
+      loop: "{{ _ports }}"
+      loop_control:
+        label: "check {{ item }}"
+      tags: [verify, remove]
+
+    - name: Verificar status das units alvo (após remoção)
+      ansible.builtin.command:
+        argv: [systemctl, is-active, "{{ item }}"]
+      register: _verify_units
+      changed_when: false
+      failed_when: false
+      loop: "{{ _services }}"
+      loop_control:
+        label: "check {{ item }}"
+      tags: [verify, remove]
+
+    - name: Verificar pacotes remanescentes
+      ansible.builtin.command:
+        argv: [rpm, -q, "{{ item }}"]
+      register: _verify_pkgs
+      changed_when: false
+      failed_when: false
+      loop: "{{ _packages }}"
+      loop_control:
+        label: "rpm -q {{ item }}"
+      tags: [verify, remove]
+
+    - name: Exportar resumo para o Workflow
+      ansible.builtin.set_stats:
+        data:
+          services_removed_requested: "{{ _services }}"
+          packages_removed_requested: "{{ _packages }}"
+          ports_freed: "{{ _ports }}"
+          remove_config_dirs: "{{ remove_config_dirs }}"
+          remove_content_dirs: "{{ remove_content_dirs }}"
+        per_host: true
+      tags: [report, remove]
+
+    - name: Banner final — Remoção concluída
+      ansible.builtin.debug:
+        msg: >-
+          {{
+            [
+              '==================================================================',
+              '  REMOÇÃO DE SERVIÇOS WEB — ' ~ inventory_hostname,
+              '==================================================================',
+              'Serviços solicitados : ' ~ (_services | join(', ')),
+              'Pacotes solicitados  : ' ~ (_packages | join(', ')),
+              'Portas alvo          : ' ~ (_ports | join(', ')),
+              'Config dirs removidos: ' ~ (remove_config_dirs | bool),
+              'Content dirs removidos: ' ~ (remove_content_dirs | bool),
+              '------------------------------------------------------------------',
+              'Units restantes (is-active):'
+            ]
+            + (_verify_units.results | map(attribute='item') | list | zip(
+                 _verify_units.results | map(attribute='stdout') | map('default','?') | list
+               ) | map('join', ' → ') | list)
+            + ['------------------------------------------------------------------', 'Pacotes restantes (rpm -q):']
+            + (_verify_pkgs.results | map(attribute='item') | list | zip(
+                 _verify_pkgs.results | map(attribute='stdout') | map('default','?') | list
+               ) | map('join', ' → ') | list)
+            + ['------------------------------------------------------------------', 'Portas (ss -ltn, vazio = livre):']
+            + (_verify_ports.results | map(attribute='item') | list | zip(
+                 _verify_ports.results | map(attribute='stdout') | map('default','') | map('trim') | list
+               ) | map('join', ' → ') | list)
+            + ['==================================================================']
+          }}
+      tags: [report, remove]
