@@ -60,6 +60,11 @@
          default='/Users/aroque/Documents/redhat/ansible/projetos/aap-lab-demo/lab-containers/prometheus/targets') }}
     monitoring_target_filename: "{{ monitoring_job_name }}.yml"
 
+    # ── Prefixo da API do Controller no gateway do AAP 2.6 ───────────────
+    # Em AWX/Tower antigos use "/api/v2"; em AAP 2.5+/2.6 o padrão é
+    # /api/controller/v2 (roteado pelo gateway).
+    aap_api_prefix: "/api/controller/v2"
+
   pre_tasks:
     # ── Guard-rail: validar parâmetros de entrada ────────────────────────
     - name: "VALIDAÇÃO · parâmetros obrigatórios"
@@ -74,70 +79,159 @@
 
   tasks:
     # ─────────────────────────────────────────────────────────────────────
-    # 1. Exportar o inventário completo do AAP via awx.awx
+    # 1. Preparar auth e base URL da API do Controller (via gateway)
     # ─────────────────────────────────────────────────────────────────────
-    - name: "AAP · exportar inventário '{{ aap_inventory_name }}'"
-      awx.awx.export:
-        inventory: "{{ aap_inventory_name }}"
-      register: _aap_export
-      tags: [export]
-
-    - name: "AAP · localizar inventário alvo dentro do export"
+    - name: "AAP · montar URL base da API do Controller"
       ansible.builtin.set_fact:
-        _inv_obj: >-
-          {{ (_aap_export.assets.inventory | default([]))
+        _api_base: "{{ controller_host | regex_replace('/$', '') }}{{ aap_api_prefix }}"
+        _use_token: "{{ (controller_oauthtoken | default('')) | length > 0 }}"
+      tags: [api, always]
+
+    - name: "AAP · montar cabeçalhos de autenticação"
+      ansible.builtin.set_fact:
+        _aap_headers: >-
+          {{ {'Authorization': 'Bearer ' ~ controller_oauthtoken,
+              'Accept': 'application/json'}
+             if _use_token
+             else {'Accept': 'application/json'} }}
+      tags: [api, always]
+
+    - name: "AAP · testar conectividade (ping)"
+      ansible.builtin.uri:
+        url: "{{ _api_base }}/ping/"
+        method: GET
+        url_username: "{{ controller_username if not _use_token else omit }}"
+        url_password: "{{ controller_password if not _use_token else omit }}"
+        force_basic_auth: "{{ not _use_token }}"
+        headers: "{{ _aap_headers }}"
+        validate_certs: "{{ controller_verify_ssl | default(false) | bool }}"
+        return_content: true
+        status_code: [200]
+      register: _aap_ping
+      tags: [api]
+
+    # ─────────────────────────────────────────────────────────────────────
+    # 2. Obter ID do inventário pelo nome
+    # ─────────────────────────────────────────────────────────────────────
+    - name: "AAP · buscar inventário '{{ aap_inventory_name }}'"
+      ansible.builtin.uri:
+        url: "{{ _api_base }}/inventories/?name={{ aap_inventory_name | urlencode }}"
+        method: GET
+        url_username: "{{ controller_username if not _use_token else omit }}"
+        url_password: "{{ controller_password if not _use_token else omit }}"
+        force_basic_auth: "{{ not _use_token }}"
+        headers: "{{ _aap_headers }}"
+        validate_certs: "{{ controller_verify_ssl | default(false) | bool }}"
+        return_content: true
+        status_code: [200]
+      register: _inv_resp
+      tags: [api, inventory]
+
+    - name: "AAP · extrair ID do inventário"
+      ansible.builtin.set_fact:
+        _inv_match: >-
+          {{ (_inv_resp.json.results | default([]))
              | selectattr('name', 'equalto', aap_inventory_name)
              | list | first | default({}) }}
-      tags: [export]
+      tags: [api, inventory]
 
     - name: "AAP · falhar se inventário não foi encontrado"
       ansible.builtin.assert:
         that:
-          - _inv_obj is mapping
-          - _inv_obj | length > 0
+          - _inv_match is mapping
+          - (_inv_match.id | default(0)) | int > 0
         fail_msg: >-
-          Inventory '{{ aap_inventory_name }}' não encontrado via awx.awx.export.
-          Verifique nome exato e permissões da credential AAP.
-      tags: [export]
+          Inventory '{{ aap_inventory_name }}' não localizado em
+          {{ _api_base }}/inventories/. Verifique nome exato e
+          permissões (View Inventory) da credential AAP.
+      tags: [api, inventory]
+
+    - name: "AAP · set_fact ID do inventário"
+      ansible.builtin.set_fact:
+        _inv_id: "{{ _inv_match.id }}"
+      tags: [api, inventory]
 
     # ─────────────────────────────────────────────────────────────────────
-    # 2. Resolver os hosts do grupo alvo
+    # 3. Obter ID do grupo dentro do inventário
     # ─────────────────────────────────────────────────────────────────────
-    - name: "AAP · extrair grupo '{{ monitoring_group }}' do inventário"
+    - name: "AAP · buscar grupo '{{ monitoring_group }}' no inventário"
+      ansible.builtin.uri:
+        url: >-
+          {{ _api_base }}/inventories/{{ _inv_id }}/groups/?name={{ monitoring_group | urlencode }}
+        method: GET
+        url_username: "{{ controller_username if not _use_token else omit }}"
+        url_password: "{{ controller_password if not _use_token else omit }}"
+        force_basic_auth: "{{ not _use_token }}"
+        headers: "{{ _aap_headers }}"
+        validate_certs: "{{ controller_verify_ssl | default(false) | bool }}"
+        return_content: true
+        status_code: [200]
+      register: _grp_resp
+      tags: [api, group]
+
+    - name: "AAP · extrair ID do grupo"
       ansible.builtin.set_fact:
-        _grp_obj: >-
-          {{ (_inv_obj.groups | default([]))
+        _grp_match: >-
+          {{ (_grp_resp.json.results | default([]))
              | selectattr('name', 'equalto', monitoring_group)
              | list | first | default({}) }}
-      tags: [export, group]
+      tags: [api, group]
 
-    - name: "AAP · falhar se grupo não existe no inventário"
+    - name: "AAP · falhar se grupo não existe"
       ansible.builtin.assert:
         that:
-          - _grp_obj is mapping
-          - _grp_obj | length > 0
-          - (_grp_obj.hosts | default([])) | length > 0
+          - _grp_match is mapping
+          - (_grp_match.id | default(0)) | int > 0
         fail_msg: >-
-          Grupo '{{ monitoring_group }}' não encontrado ou está vazio no
-          inventory '{{ aap_inventory_name }}'.
-      tags: [export, group]
+          Grupo '{{ monitoring_group }}' não encontrado no inventário
+          '{{ aap_inventory_name }}' (id={{ _inv_id }}).
+      tags: [api, group]
 
-    - name: "AAP · consolidar lista de hosts do grupo"
+    - name: "AAP · set_fact ID do grupo"
+      ansible.builtin.set_fact:
+        _grp_id: "{{ _grp_match.id }}"
+      tags: [api, group]
+
+    # ─────────────────────────────────────────────────────────────────────
+    # 4. Listar hosts do grupo (paginado)
+    # ─────────────────────────────────────────────────────────────────────
+    - name: "AAP · listar hosts do grupo (até 200)"
+      ansible.builtin.uri:
+        url: "{{ _api_base }}/groups/{{ _grp_id }}/hosts/?page_size=200"
+        method: GET
+        url_username: "{{ controller_username if not _use_token else omit }}"
+        url_password: "{{ controller_password if not _use_token else omit }}"
+        force_basic_auth: "{{ not _use_token }}"
+        headers: "{{ _aap_headers }}"
+        validate_certs: "{{ controller_verify_ssl | default(false) | bool }}"
+        return_content: true
+        status_code: [200]
+      register: _hosts_resp
+      tags: [api, hosts]
+
+    - name: "AAP · consolidar lista de hosts"
       ansible.builtin.set_fact:
         monitoring_hosts: >-
-          {{ _grp_obj.hosts | map(attribute='name') | list
-             if (_grp_obj.hosts | first) is mapping
-             else _grp_obj.hosts }}
-      tags: [export, group]
+          {{ _hosts_resp.json.results | default([]) | map(attribute='name') | list }}
+      tags: [api, hosts]
+
+    - name: "AAP · falhar se grupo está vazio"
+      ansible.builtin.assert:
+        that:
+          - monitoring_hosts | length > 0
+        fail_msg: >-
+          Grupo '{{ monitoring_group }}' está vazio no inventário
+          '{{ aap_inventory_name }}'. Nada a renderizar.
+      tags: [api, hosts]
 
     - name: "AAP · exibir hosts descobertos"
       ansible.builtin.debug:
         msg:
-          - "Inventory : {{ aap_inventory_name }}"
-          - "Grupo     : {{ monitoring_group }}"
+          - "Inventory : {{ aap_inventory_name }} (id={{ _inv_id }})"
+          - "Grupo     : {{ monitoring_group }} (id={{ _grp_id }})"
           - "Hosts     : {{ monitoring_hosts }}"
           - "Qtde      : {{ monitoring_hosts | length }}"
-      tags: [export, group]
+      tags: [api, hosts]
 
     # ─────────────────────────────────────────────────────────────────────
     # 3. Preparar diretório de destino e renderizar targets
