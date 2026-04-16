@@ -87,47 +87,26 @@
     - name: "AAP · resolver host/usuário/senha/token da credential"
       ansible.builtin.set_fact:
         _aap_host: >-
-          {{ aap_hostname
-             | default(controller_host, true)
-             | default(tower_host, true)
-             | default('') }}
+          {{ lookup('ansible.builtin.vars', 'aap_hostname', default='')
+             or lookup('ansible.builtin.vars', 'controller_host', default='')
+             or lookup('ansible.builtin.vars', 'tower_host', default='') }}
         _aap_user: >-
-          {{ aap_username
-             | default(controller_username, true)
-             | default(tower_username, true)
-             | default('') }}
+          {{ lookup('ansible.builtin.vars', 'aap_username', default='')
+             or lookup('ansible.builtin.vars', 'controller_username', default='')
+             or lookup('ansible.builtin.vars', 'tower_username', default='') }}
         _aap_pass: >-
-          {{ aap_password
-             | default(controller_password, true)
-             | default(tower_password, true)
-             | default('') }}
+          {{ lookup('ansible.builtin.vars', 'aap_password', default='')
+             or lookup('ansible.builtin.vars', 'controller_password', default='')
+             or lookup('ansible.builtin.vars', 'tower_password', default='') }}
         _aap_token: >-
-          {{ aap_token
-             | default(controller_oauthtoken, true)
-             | default(tower_oauthtoken, true)
-             | default('') }}
+          {{ lookup('ansible.builtin.vars', 'aap_token', default='')
+             or lookup('ansible.builtin.vars', 'controller_oauthtoken', default='')
+             or lookup('ansible.builtin.vars', 'tower_oauthtoken', default='') }}
         _aap_verify: >-
-          {{ aap_validate_certs
-             | default(controller_verify_ssl, true)
-             | default(tower_verify_ssl, true)
-             | default(false) }}
-      vars:
-        # defaults pra evitar "undefined" quando a convenção não foi injetada
-        aap_hostname: "{{ aap_hostname | default('') }}"
-        aap_username: "{{ aap_username | default('') }}"
-        aap_password: "{{ aap_password | default('') }}"
-        aap_token: "{{ aap_token | default('') }}"
-        aap_validate_certs: "{{ aap_validate_certs | default(omit) }}"
-        controller_host: "{{ controller_host | default('') }}"
-        controller_username: "{{ controller_username | default('') }}"
-        controller_password: "{{ controller_password | default('') }}"
-        controller_oauthtoken: "{{ controller_oauthtoken | default('') }}"
-        controller_verify_ssl: "{{ controller_verify_ssl | default(omit) }}"
-        tower_host: "{{ tower_host | default('') }}"
-        tower_username: "{{ tower_username | default('') }}"
-        tower_password: "{{ tower_password | default('') }}"
-        tower_oauthtoken: "{{ tower_oauthtoken | default('') }}"
-        tower_verify_ssl: "{{ tower_verify_ssl | default(omit) }}"
+          {{ lookup('ansible.builtin.vars', 'aap_validate_certs', default=none)
+             | default(lookup('ansible.builtin.vars', 'controller_verify_ssl', default=none), true)
+             | default(lookup('ansible.builtin.vars', 'tower_verify_ssl', default=none), true)
+             | default(false, true) }}
       tags: [api, always]
 
     - name: "AAP · validar que a credential foi injetada"
