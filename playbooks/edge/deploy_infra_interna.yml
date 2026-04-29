@@ -18,6 +18,7 @@
 - name: Deploy servidor Infra-Interna - Edge
   hosts: "{{ target_hosts | default('infra') }}:&infra"
   gather_facts: true
+  become: true
 
   vars:
     site_name: "{{ site_name | default('Loja Demo') }}"
