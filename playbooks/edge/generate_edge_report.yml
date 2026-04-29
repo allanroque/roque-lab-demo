@@ -1,0 +1,153 @@
+---
+# Playbook: Gerar relatório/dashboard de todas as lojas Edge
+#
+# Coleta status de routers Cisco, servidores PDV e Infra-Interna
+# e gera um dashboard HTML interativo com visão geral e por loja.
+#
+# Estrutura esperada do inventário:
+#   Cada host deve ter as variáveis:
+#     store_id   - ID da loja (ex: "001")
+#     store_name - Nome da loja (ex: "Loja Centro SP")
+#     store_role - Papel: router, pdv, infra
+#
+# Variáveis para Survey do AAP:
+#   report_server  - Host onde o relatório será gerado (default: localhost)
+#   report_path    - Caminho do arquivo HTML (default: /usr/share/nginx/html/report.html)
+
+# --- Play 1: Coletar dados dos routers Cisco ---
+
+- name: Coletar status dos routers Cisco
+  hosts: cisco_edge
+  gather_facts: false
+  connection: ansible.netcommon.network_cli
+
+  tasks:
+    - name: Coletar informações do router
+      cisco.ios.ios_command:
+        commands:
+          - show version
+          - show ip interface brief
+          - show snmp community
+          - show vlan brief
+          - show ntp status
+      register: cisco_output
+
+    - name: Coletar facts do dispositivo
+      cisco.ios.ios_facts:
+        gather_subset:
+          - hardware
+          - interfaces
+      register: cisco_facts
+
+    - name: Armazenar dados do router
+      ansible.builtin.set_fact:
+        device_report:
+          hostname: "{{ cisco_facts.ansible_facts.ansible_net_hostname | default(inventory_hostname) }}"
+          model: "{{ cisco_facts.ansible_facts.ansible_net_model | default('N/A') }}"
+          serial: "{{ cisco_facts.ansible_facts.ansible_net_serialnum | default('N/A') }}"
+          version: "{{ cisco_facts.ansible_facts.ansible_net_version | default('N/A') }}"
+          image: "{{ cisco_facts.ansible_facts.ansible_net_image | default('N/A') }}"
+          interfaces: "{{ cisco_output.stdout[1] }}"
+          snmp: "{{ cisco_output.stdout[2] }}"
+          vlans: "{{ cisco_output.stdout[3] }}"
+          ntp: "{{ cisco_output.stdout[4] }}"
+          uptime: "{{ cisco_facts.ansible_facts.ansible_net_hostname | default('N/A') }}"
+          ip: "{{ ansible_host }}"
+          store_id: "{{ store_id }}"
+          store_name: "{{ store_name }}"
+          store_role: "router"
+          status: "online"
+
+# --- Play 2: Coletar dados dos servidores Linux ---
+
+- name: Coletar status dos servidores Edge
+  hosts: edge_pos:edge_infra
+  gather_facts: true
+
+  tasks:
+    - name: Verificar status dos serviços do PDV
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+      register: pdv_services
+      loop:
+        - nginx
+        - mariadb
+        - pos-api
+      when: store_role == 'pdv'
+      failed_when: false
+
+    - name: Verificar status dos serviços de infra
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+      register: infra_services
+      loop:
+        - rsyslog
+        - chronyd
+        - tftp.socket
+        - nginx
+      when: store_role == 'infra'
+      failed_when: false
+
+    - name: Coletar uso de disco
+      ansible.builtin.command:
+        cmd: df -h --output=pcent /
+      register: disk_usage
+      changed_when: false
+
+    - name: Coletar uptime
+      ansible.builtin.command:
+        cmd: uptime -p
+      register: server_uptime
+      changed_when: false
+
+    - name: Armazenar dados do servidor
+      ansible.builtin.set_fact:
+        device_report:
+          hostname: "{{ ansible_hostname }}"
+          os: "{{ ansible_distribution }} {{ ansible_distribution_version }}"
+          kernel: "{{ ansible_kernel }}"
+          cpu_count: "{{ ansible_processor_vcpus }}"
+          memory_total_mb: "{{ ansible_memtotal_mb }}"
+          memory_free_mb: "{{ ansible_memfree_mb }}"
+          disk_usage: "{{ disk_usage.stdout_lines[-1] | trim }}"
+          uptime: "{{ server_uptime.stdout }}"
+          ip: "{{ ansible_default_ipv4.address | default(ansible_host) }}"
+          store_id: "{{ store_id }}"
+          store_name: "{{ store_name }}"
+          store_role: "{{ store_role }}"
+          status: "online"
+          services: "{{ (pdv_services.results | default([]) + infra_services.results | default([])) | selectattr('status', 'defined') | map(attribute='status') | list }}"
+          services_detail: "{{ (pdv_services.results | default([]) + infra_services.results | default([])) | selectattr('item', 'defined') | list }}"
+
+# --- Play 3: Gerar relatório HTML ---
+
+- name: Gerar dashboard Edge
+  hosts: "{{ report_server | default('localhost') }}"
+  gather_facts: false
+  connection: local
+
+  tasks:
+    - name: Coletar dados de todos os hosts
+      ansible.builtin.set_fact:
+        all_devices: >-
+          {{
+            groups['cisco_edge'] | default([]) | map('extract', hostvars, 'device_report') | select('defined') | list
+            +
+            groups['edge_pos'] | default([]) | map('extract', hostvars, 'device_report') | select('defined') | list
+            +
+            groups['edge_infra'] | default([]) | map('extract', hostvars, 'device_report') | select('defined') | list
+          }}
+
+    - name: Agrupar dados por loja
+      ansible.builtin.set_fact:
+        stores_data: "{{ all_devices | groupby('store_id') }}"
+
+    - name: Gerar relatório HTML
+      ansible.builtin.template:
+        src: templates/edge_report.html.j2
+        dest: "{{ report_path | default('/usr/share/nginx/html/report.html') }}"
+        mode: "0644"
+
+    - name: Exibir localização do relatório
+      ansible.builtin.debug:
+        msg: "Relatório gerado em {{ report_path | default('/usr/share/nginx/html/report.html') }}"

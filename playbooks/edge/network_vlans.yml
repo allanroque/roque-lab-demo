@@ -12,11 +12,14 @@
 #   vlan_state - Estado: merged, replaced, deleted (default: "merged")
 
 - name: Configurar VLANs em switches Cisco - Edge
-  hosts: "{{ target_hosts | default('cisco_edge') }}"
+  hosts: "{{ target_hosts | default('cisco') }}"
   gather_facts: false
-  connection: ansible.netcommon.network_cli
 
   tasks:
+    - name: Pular hosts que não são Cisco
+      ansible.builtin.meta: end_host
+      when: ansible_network_os is not defined or ansible_network_os != 'cisco.ios.ios'
+
     - name: Validar que a configuração de VLANs foi informada
       ansible.builtin.assert:
         that:
