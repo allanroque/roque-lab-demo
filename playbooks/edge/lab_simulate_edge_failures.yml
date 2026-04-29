@@ -1,0 +1,67 @@
+---
+# Playbook: Lab — simular falhas em edge (loja)
+#
+# Objetivo didático: quebrar monitoração/coerência típica do dashboard/labs.
+#   - Switches Cisco: remove SNMP (comunidades alvo) e servidores NTP configurados
+#   - Servidor PDV: para o nginx (simula indisponibilidade do front/API atrás do proxy)
+#
+# Variáveis (AAP survey ou extra_vars):
+#   target_hosts          - Grupo da loja no inventário (ex.: loja1)
+#   snmp_ro_community     - Community RO a remover (default alinhado ao configure_snmp)
+#   snmp_rw_community     - Community RW a remover
+#   ntp_server_primary    - Servidor NTP a remover (default alinhado ao network_time)
+#   ntp_server_secondary  - Servidor NTP secundário a remover
+#
+# Observação: remoções Cisco usam ignore_errors para não abortar se uma linha já não existir.
+
+- name: Lab edge — remover SNMP e NTP nos switches Cisco da loja
+  hosts: "{{ target_hosts }}:&cisco"
+  gather_facts: false
+
+  vars:
+    snmp_ro_community: "{{ snmp_ro_community | default('comunidade_leitura') }}"
+    snmp_rw_community: "{{ snmp_rw_community | default('comunidade_escrita') }}"
+    ntp_server_primary: "{{ ntp_server_primary | default('a.ntp.br') }}"
+    ntp_server_secondary: "{{ ntp_server_secondary | default('b.ntp.br') }}"
+
+  tasks:
+    - name: Remover comunidades SNMP (RO/RW)
+      cisco.ios.ios_config:
+        commands:
+          - no snmp-server community {{ snmp_ro_community }} RO
+          - no snmp-server community {{ snmp_rw_community }} RW
+      ignore_errors: true
+
+    - name: Remover servidores NTP
+      cisco.ios.ios_config:
+        commands:
+          - no ntp server {{ ntp_server_primary }}
+          - no ntp server {{ ntp_server_secondary }}
+      ignore_errors: true
+
+    - name: Persistir running-config
+      cisco.ios.ios_config:
+        save_when: modified
+
+    - name: Resumo — switches
+      ansible.builtin.debug:
+        msg:
+          - "SNMP/NTP removidos conforme variáveis (ignorando linhas inexistentes)."
+          - "Comunidades alvo: RO={{ snmp_ro_community }} RW={{ snmp_rw_community }}"
+          - "NTP alvo: {{ ntp_server_primary }}, {{ ntp_server_secondary }}"
+
+- name: Lab edge — parar nginx no PDV (simula falha de serviço)
+  hosts: "{{ target_hosts }}:&pdv"
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Parar e desabilitar nginx no boot
+      ansible.builtin.systemd:
+        name: nginx
+        state: stopped
+        enabled: false
+
+    - name: Resumo — PDV
+      ansible.builtin.debug:
+        msg: "nginx parado e desabilitado em {{ inventory_hostname }} — simulação de falha."
