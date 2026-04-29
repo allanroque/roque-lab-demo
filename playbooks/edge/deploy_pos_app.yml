@@ -143,6 +143,18 @@
         state: absent
       notify: Reiniciar Nginx
 
+    - name: Deploy nginx.conf sem server block default
+      ansible.builtin.template:
+        src: templates/pos_nginx_main.conf.j2
+        dest: /etc/nginx/nginx.conf
+        mode: "0644"
+      notify: Reiniciar Nginx
+
+    - name: Permitir Nginx conectar em serviços de rede (SELinux)
+      ansible.builtin.command:
+        cmd: setsebool -P httpd_can_network_connect 1
+      changed_when: false
+
     - name: Habilitar e iniciar Nginx
       ansible.builtin.systemd:
         name: nginx
