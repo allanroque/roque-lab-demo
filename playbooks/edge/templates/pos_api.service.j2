@@ -1,0 +1,13 @@
+[Unit]
+Description=POS API - {{ pos_store_name }}
+After=network.target mariadb.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 {{ pos_app_dir }}/app.py
+Restart=always
+RestartSec=5
+Environment=FLASK_ENV=production
+
+[Install]
+WantedBy=multi-user.target

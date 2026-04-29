@@ -1,0 +1,43 @@
+---
+# Playbook: Configurar NTP em dispositivos Cisco (Edge)
+#
+# Variáveis para Survey do AAP:
+#   ntp_server_primary   - Servidor NTP primário (ex: "a.ntp.br")
+#   ntp_server_secondary - Servidor NTP secundário (ex: "b.ntp.br")
+#   ntp_timezone_name    - Nome do fuso horário (ex: "BRT")
+#   ntp_timezone_offset  - Offset UTC em horas (ex: "-3")
+
+- name: Configurar NTP em switches/routers Cisco - Edge
+  hosts: "{{ target_hosts | default('cisco_edge') }}"
+  gather_facts: false
+  connection: ansible.netcommon.network_cli
+
+  tasks:
+    - name: Validar que o servidor NTP é um endereço válido
+      ansible.builtin.assert:
+        that:
+          - ntp_server_primary is defined
+        msg: "'ntp_server_primary' deve ser informado"
+
+    - name: Configurar servidores NTP e timezone
+      cisco.ios.ios_config:
+        commands:
+          - "ntp server {{ ntp_server_primary }}"
+          - "ntp server {{ ntp_server_secondary | default('b.ntp.br') }}"
+          - "clock timezone {{ ntp_timezone_name | default('BRT') }} {{ ntp_timezone_offset | default('-3') }}"
+
+    - name: Salvar configuração
+      cisco.ios.ios_config:
+        save_when: modified
+
+    - name: Validar configuração NTP
+      cisco.ios.ios_command:
+        commands:
+          - show ntp associations
+          - show ntp status
+          - show clock
+      register: ntp_output
+
+    - name: Exibir status NTP
+      ansible.builtin.debug:
+        msg: "{{ ntp_output.stdout_lines }}"

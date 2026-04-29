@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+"""API POS - {{ pos_store_name }} ({{ pos_store_id }})"""
+
+from flask import Flask, jsonify, request
+import pymysql
+
+app = Flask(__name__)
+
+DB_CONFIG = {
+    "host": "localhost",
+    "user": "{{ pos_db_user }}",
+    "password": "{{ pos_db_password }}",
+    "database": "{{ pos_db_name }}",
+    "cursorclass": pymysql.cursors.DictCursor,
+}
+
+
+def get_db():
+    return pymysql.connect(**DB_CONFIG)
+
+
+@app.route("/api/health")
+def health():
+    try:
+        conn = get_db()
+        conn.close()
+        return jsonify({"status": "ok", "store": "{{ pos_store_name }}", "store_id": "{{ pos_store_id }}"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/produtos")
+def listar_produtos():
+    conn = get_db()
+    with conn.cursor() as cursor:
+        cursor.execute("SELECT * FROM produtos ORDER BY nome")
+        produtos = cursor.fetchall()
+    conn.close()
+    return jsonify(produtos)
+
+
+@app.route("/api/produtos/<int:produto_id>")
+def buscar_produto(produto_id):
+    conn = get_db()
+    with conn.cursor() as cursor:
+        cursor.execute("SELECT * FROM produtos WHERE id = %s", (produto_id,))
+        produto = cursor.fetchone()
+    conn.close()
+    if produto:
+        return jsonify(produto)
+    return jsonify({"error": "Produto não encontrado"}), 404
+
+
+@app.route("/api/vendas", methods=["POST"])
+def registrar_venda():
+    data = request.get_json()
+    conn = get_db()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO vendas (total, forma_pagamento, operador) VALUES (%s, %s, %s)",
+                (data["total"], data["forma_pagamento"], data.get("operador", "caixa01")),
+            )
+            venda_id = cursor.lastrowid
+            for item in data.get("itens", []):
+                cursor.execute(
+                    "INSERT INTO itens_venda (venda_id, produto_id, quantidade, preco_unitario) VALUES (%s, %s, %s, %s)",
+                    (venda_id, item["produto_id"], item["quantidade"], item["preco_unitario"]),
+                )
+                cursor.execute(
+                    "UPDATE produtos SET estoque = estoque - %s WHERE id = %s",
+                    (item["quantidade"], item["produto_id"]),
+                )
+        conn.commit()
+        return jsonify({"venda_id": venda_id, "status": "registrada"}), 201
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"error": str(e)}), 400
+    finally:
+        conn.close()
+
+
+@app.route("/api/vendas")
+def listar_vendas():
+    conn = get_db()
+    with conn.cursor() as cursor:
+        cursor.execute("SELECT * FROM vendas ORDER BY data_venda DESC LIMIT 50")
+        vendas = cursor.fetchall()
+    conn.close()
+    return jsonify(vendas)
+
+
+@app.route("/api/dashboard")
+def dashboard():
+    conn = get_db()
+    with conn.cursor() as cursor:
+        cursor.execute("SELECT COUNT(*) as total_vendas, COALESCE(SUM(total), 0) as faturamento FROM vendas")
+        resumo = cursor.fetchone()
+        cursor.execute("SELECT COUNT(*) as total_produtos, COALESCE(SUM(estoque), 0) as itens_estoque FROM produtos")
+        estoque = cursor.fetchone()
+        cursor.execute("SELECT nome, estoque FROM produtos WHERE estoque < 10 ORDER BY estoque")
+        estoque_baixo = cursor.fetchall()
+    conn.close()
+    return jsonify({
+        "store": "{{ pos_store_name }}",
+        "store_id": "{{ pos_store_id }}",
+        "vendas": resumo["total_vendas"],
+        "faturamento": float(resumo["faturamento"]),
+        "total_produtos": estoque["total_produtos"],
+        "itens_estoque": estoque["itens_estoque"],
+        "estoque_baixo": estoque_baixo,
+    })
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port={{ pos_app_port }})

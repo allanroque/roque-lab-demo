@@ -1,0 +1,40 @@
+---
+# Playbook: Configurar usuário local em dispositivos Cisco (Edge)
+#
+# Variáveis para Survey do AAP:
+#   net_username  - Nome do usuário (ex: "admin_edge")
+#   net_password  - Senha do usuário
+#   net_privilege - Nível de privilégio 0-15 (default: "15")
+#   net_user_state - present ou absent (default: "present")
+
+- name: Configurar usuário em switches/routers Cisco - Edge
+  hosts: "{{ target_hosts | default('cisco_edge') }}"
+  gather_facts: false
+  connection: ansible.netcommon.network_cli
+
+  tasks:
+    - name: Configurar usuário local
+      cisco.ios.ios_config:
+        commands:
+          - "username {{ net_username }} privilege {{ net_privilege | default('15') }} secret {{ net_password }}"
+      when: net_user_state | default('present') == 'present'
+
+    - name: Remover usuário local
+      cisco.ios.ios_config:
+        commands:
+          - "no username {{ net_username }}"
+      when: net_user_state | default('present') == 'absent'
+
+    - name: Salvar configuração
+      cisco.ios.ios_config:
+        save_when: modified
+
+    - name: Validar usuários configurados
+      cisco.ios.ios_command:
+        commands:
+          - show running-config | include username
+      register: user_output
+
+    - name: Exibir usuários configurados
+      ansible.builtin.debug:
+        msg: "{{ user_output.stdout_lines }}"

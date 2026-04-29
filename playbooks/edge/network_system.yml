@@ -1,0 +1,54 @@
+---
+# Playbook: Configurar propriedades de sistema em dispositivos Cisco (Edge)
+#
+# Variáveis para Survey do AAP:
+#   device_hostname    - Hostname do dispositivo (ex: "SW-LOJA-042")
+#   device_domain      - Domínio DNS (ex: "edge.empresa.com.br")
+#   dns_server_primary - DNS primário (ex: "8.8.8.8")
+#   dns_server_secondary - DNS secundário (ex: "8.8.4.4")
+#   log_server         - IP do servidor de syslog (ex: "192.168.100.10")
+
+- name: Configurar sistema em switches/routers Cisco - Edge
+  hosts: "{{ target_hosts | default('cisco_edge') }}"
+  gather_facts: false
+  connection: ansible.netcommon.network_cli
+
+  tasks:
+    - name: Configurar hostname e domínio
+      cisco.ios.ios_hostname:
+        config:
+          hostname: "{{ device_hostname }}"
+          domain_name: "{{ device_domain | default('edge.empresa.com.br') }}"
+
+    - name: Configurar servidores DNS
+      cisco.ios.ios_config:
+        commands:
+          - "ip name-server {{ dns_server_primary | default('8.8.8.8') }}"
+          - "ip name-server {{ dns_server_secondary | default('8.8.4.4') }}"
+          - "ip domain lookup"
+
+    - name: Configurar logging remoto
+      cisco.ios.ios_logging_global:
+        config:
+          hosts:
+            - hostname: "{{ log_server }}"
+          trap: informational
+          source_interface: "{{ log_source_interface | default('Loopback0') }}"
+        state: merged
+      when: log_server is defined
+
+    - name: Salvar configuração
+      cisco.ios.ios_config:
+        save_when: modified
+
+    - name: Validar configuração do sistema
+      cisco.ios.ios_command:
+        commands:
+          - show running-config | include hostname
+          - show running-config | include domain
+          - show running-config | include name-server
+      register: system_output
+
+    - name: Exibir configuração aplicada
+      ansible.builtin.debug:
+        msg: "{{ system_output.stdout_lines }}"

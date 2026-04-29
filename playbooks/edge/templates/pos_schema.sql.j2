@@ -1,0 +1,40 @@
+-- Schema POS - {{ pos_store_name }} ({{ pos_store_id }})
+
+CREATE TABLE IF NOT EXISTS produtos (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    nome VARCHAR(200) NOT NULL,
+    codigo_barras VARCHAR(50) UNIQUE,
+    preco DECIMAL(10,2) NOT NULL,
+    estoque INT DEFAULT 0,
+    categoria VARCHAR(100),
+    criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS vendas (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    total DECIMAL(10,2) NOT NULL,
+    forma_pagamento VARCHAR(50) NOT NULL,
+    operador VARCHAR(100),
+    data_venda TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS itens_venda (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    venda_id INT NOT NULL,
+    produto_id INT NOT NULL,
+    quantidade INT NOT NULL,
+    preco_unitario DECIMAL(10,2) NOT NULL,
+    FOREIGN KEY (venda_id) REFERENCES vendas(id),
+    FOREIGN KEY (produto_id) REFERENCES produtos(id)
+);
+
+-- Produtos demo
+INSERT IGNORE INTO produtos (id, nome, codigo_barras, preco, estoque, categoria) VALUES
+(1, 'Café 500g',        '7891000100103', 18.90,  45, 'Bebidas'),
+(2, 'Arroz 5kg',        '7891000200200', 24.50,  30, 'Alimentos'),
+(3, 'Feijão 1kg',       '7891000300307', 8.90,   50, 'Alimentos'),
+(4, 'Leite Integral 1L','7891000400404', 5.49,   80, 'Bebidas'),
+(5, 'Açúcar 1kg',       '7891000500501', 4.99,   60, 'Alimentos'),
+(6, 'Óleo de Soja 900ml','7891000600608', 7.90,  40, 'Alimentos'),
+(7, 'Sabonete 90g',     '7891000700705', 2.49,  100, 'Higiene'),
+(8, 'Detergente 500ml', '7891000800802', 2.99,   70, 'Limpeza');

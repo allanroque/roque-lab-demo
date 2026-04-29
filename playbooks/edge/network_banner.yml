@@ -1,0 +1,28 @@
+---
+# Playbook: Configurar banner de login em dispositivos Cisco (Edge)
+#
+# Variáveis para Survey do AAP:
+#   banner_type    - Tipo do banner: login ou motd (default: login)
+#   banner_message - Texto do banner
+
+- name: Configurar banner em switches/routers Cisco - Edge
+  hosts: "{{ target_hosts | default('cisco_edge') }}"
+  gather_facts: false
+  connection: ansible.netcommon.network_cli
+
+  tasks:
+    - name: Configurar banner no dispositivo
+      cisco.ios.ios_banner:
+        banner: "{{ banner_type | default('login') }}"
+        text: "{{ banner_message }}"
+        state: present
+
+    - name: Validar banner configurado
+      cisco.ios.ios_command:
+        commands:
+          - "show banner {{ banner_type | default('login') }}"
+      register: banner_output
+
+    - name: Exibir banner aplicado
+      ansible.builtin.debug:
+        msg: "{{ banner_output.stdout_lines }}"

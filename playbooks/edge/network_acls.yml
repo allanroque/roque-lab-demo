@@ -1,0 +1,49 @@
+---
+# Playbook: Configurar ACLs em dispositivos Cisco (Edge)
+#
+# Variáveis para Survey do AAP:
+#   acl_name       - Nome da ACL (ex: "EDGE_MGMT_ACCESS")
+#   acl_number     - Número da ACL (ex: "100")
+#   acl_action     - Ação: permit ou deny (default: permit)
+#   acl_protocol   - Protocolo: tcp, udp, ip (default: tcp)
+#   acl_src        - Rede de origem (ex: "192.168.100.0 0.0.0.255")
+#   acl_dst        - Rede de destino (ex: "any")
+#   acl_dst_port   - Porta de destino (ex: "22")
+
+- name: Configurar ACL em switches/routers Cisco - Edge
+  hosts: "{{ target_hosts | default('cisco_edge') }}"
+  gather_facts: false
+  connection: ansible.netcommon.network_cli
+
+  tasks:
+    - name: Configurar ACL
+      cisco.ios.ios_acls:
+        config:
+          - afi: ipv4
+            acls:
+              - name: "{{ acl_number }}"
+                aces:
+                  - grant: "{{ acl_action | default('permit') }}"
+                    protocol: "{{ acl_protocol | default('tcp') }}"
+                    source:
+                      address: "{{ acl_src_address | default('any') }}"
+                    destination:
+                      address: "{{ acl_dst_address | default('any') }}"
+                      port_protocol:
+                        eq: "{{ acl_dst_port | default('22') }}"
+                    remark: "{{ acl_name | default('EDGE_MGMT_ACCESS') }}"
+        state: "{{ acl_state | default('merged') }}"
+
+    - name: Salvar configuração
+      cisco.ios.ios_config:
+        save_when: modified
+
+    - name: Validar ACL aplicada
+      cisco.ios.ios_command:
+        commands:
+          - "show access-lists {{ acl_number }}"
+      register: acl_output
+
+    - name: Exibir ACL configurada
+      ansible.builtin.debug:
+        msg: "{{ acl_output.stdout_lines }}"

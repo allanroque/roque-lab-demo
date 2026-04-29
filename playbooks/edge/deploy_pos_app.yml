@@ -1,0 +1,166 @@
+---
+# Playbook: Deploy de aplicação POS 3 camadas (Edge/Lojas/PDV)
+#
+# Arquitetura:
+#   Nginx (frontend) → Flask API (backend) → MariaDB (banco de dados)
+#
+# Variáveis para Survey do AAP:
+#   pos_store_name   - Nome da loja (ex: "Loja Centro SP 042")
+#   pos_store_id     - ID da loja (ex: "042")
+#   pos_db_password  - Senha do banco de dados
+#   pos_app_port     - Porta da API (default: 5000)
+
+- name: Deploy aplicação POS 3 camadas - Edge
+  hosts: "{{ target_hosts | default('edge_pos') }}"
+  gather_facts: true
+
+  vars:
+    pos_store_name: "{{ pos_store_name | default('Loja Demo') }}"
+    pos_store_id: "{{ pos_store_id | default('001') }}"
+    pos_db_password: "{{ pos_db_password }}"
+    pos_app_port: "{{ pos_app_port | default('5000') }}"
+    pos_db_name: "pos_store_{{ pos_store_id }}"
+    pos_db_user: "pos_app"
+    pos_app_dir: "/opt/pos-app"
+
+  tasks:
+    # --- Camada 1: Banco de Dados (MariaDB) ---
+
+    - name: Instalar MariaDB
+      ansible.builtin.dnf:
+        name:
+          - mariadb-server
+          - python3-PyMySQL
+        state: present
+
+    - name: Habilitar e iniciar MariaDB
+      ansible.builtin.systemd:
+        name: mariadb
+        state: started
+        enabled: true
+
+    - name: Criar banco de dados da loja
+      community.mysql.mysql_db:
+        name: "{{ pos_db_name }}"
+        state: present
+        login_unix_socket: /var/lib/mysql/mysql.sock
+
+    - name: Criar usuário do banco de dados
+      community.mysql.mysql_user:
+        name: "{{ pos_db_user }}"
+        password: "{{ pos_db_password }}"
+        priv: "{{ pos_db_name }}.*:ALL"
+        host: "localhost"
+        state: present
+        login_unix_socket: /var/lib/mysql/mysql.sock
+
+    - name: Criar tabelas da aplicação
+      community.mysql.mysql_db:
+        name: "{{ pos_db_name }}"
+        state: import
+        target: "{{ pos_app_dir }}/schema.sql"
+        login_unix_socket: /var/lib/mysql/mysql.sock
+        login_user: "{{ pos_db_user }}"
+        login_password: "{{ pos_db_password }}"
+      notify: Reiniciar POS API
+
+    # --- Camada 2: Backend (Flask API) ---
+
+    - name: Instalar dependências do backend
+      ansible.builtin.dnf:
+        name:
+          - python3
+          - python3-pip
+          - python3-flask
+          - python3-PyMySQL
+        state: present
+
+    - name: Criar diretório da aplicação
+      ansible.builtin.file:
+        path: "{{ pos_app_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Deploy do schema do banco de dados
+      ansible.builtin.template:
+        src: templates/pos_schema.sql.j2
+        dest: "{{ pos_app_dir }}/schema.sql"
+        mode: "0644"
+
+    - name: Deploy da API Flask
+      ansible.builtin.template:
+        src: templates/pos_api.py.j2
+        dest: "{{ pos_app_dir }}/app.py"
+        mode: "0755"
+      notify: Reiniciar POS API
+
+    - name: Deploy do serviço systemd da API
+      ansible.builtin.template:
+        src: templates/pos_api.service.j2
+        dest: /etc/systemd/system/pos-api.service
+        mode: "0644"
+      notify: Reiniciar POS API
+
+    - name: Habilitar e iniciar API
+      ansible.builtin.systemd:
+        name: pos-api
+        state: started
+        enabled: true
+        daemon_reload: true
+
+    # --- Camada 3: Frontend (Nginx) ---
+
+    - name: Instalar Nginx
+      ansible.builtin.dnf:
+        name: nginx
+        state: present
+
+    - name: Deploy do frontend HTML
+      ansible.builtin.template:
+        src: templates/pos_frontend.html.j2
+        dest: /usr/share/nginx/html/index.html
+        mode: "0644"
+      notify: Reiniciar Nginx
+
+    - name: Deploy da configuração Nginx
+      ansible.builtin.template:
+        src: templates/pos_nginx.conf.j2
+        dest: /etc/nginx/conf.d/pos-app.conf
+        mode: "0644"
+      notify: Reiniciar Nginx
+
+    - name: Remover configuração default do Nginx
+      ansible.builtin.file:
+        path: /etc/nginx/conf.d/default.conf
+        state: absent
+      notify: Reiniciar Nginx
+
+    - name: Habilitar e iniciar Nginx
+      ansible.builtin.systemd:
+        name: nginx
+        state: started
+        enabled: true
+
+    - name: Liberar portas no firewall
+      ansible.posix.firewalld:
+        service: "{{ item }}"
+        permanent: true
+        immediate: true
+        state: enabled
+      loop:
+        - http
+        - https
+
+  handlers:
+    - name: Reiniciar POS API
+      ansible.builtin.systemd:
+        name: pos-api
+        state: restarted
+        daemon_reload: true
+
+    - name: Reiniciar Nginx
+      ansible.builtin.systemd:
+        name: nginx
+        state: restarted

@@ -1,0 +1,49 @@
+---
+# Playbook: Configurar VLANs em switches Cisco (Edge)
+#
+# Variáveis para Survey do AAP:
+#   vlan_config - Lista de VLANs em YAML:
+#     - name: PDV
+#       vlan_id: 10
+#     - name: BACKOFFICE
+#       vlan_id: 20
+#     - name: WIFI_CLIENTES
+#       vlan_id: 30
+#   vlan_state - Estado: merged, replaced, deleted (default: "merged")
+
+- name: Configurar VLANs em switches Cisco - Edge
+  hosts: "{{ target_hosts | default('cisco_edge') }}"
+  gather_facts: false
+  connection: ansible.netcommon.network_cli
+
+  tasks:
+    - name: Validar que a configuração de VLANs foi informada
+      ansible.builtin.assert:
+        that:
+          - vlan_config is defined
+          - vlan_config | length > 0
+        msg: "'vlan_config' deve conter ao menos uma VLAN"
+
+    - name: Converter vlan_config se recebido como string
+      ansible.builtin.set_fact:
+        vlan_config: "{{ vlan_config | from_yaml }}"
+      when: vlan_config is string
+
+    - name: Configurar VLANs
+      cisco.ios.ios_vlans:
+        config: "{{ vlan_config }}"
+        state: "{{ vlan_state | default('merged') }}"
+
+    - name: Salvar configuração
+      cisco.ios.ios_config:
+        save_when: modified
+
+    - name: Validar VLANs configuradas
+      cisco.ios.ios_command:
+        commands:
+          - show vlan brief
+      register: vlan_output
+
+    - name: Exibir VLANs configuradas
+      ansible.builtin.debug:
+        msg: "{{ vlan_output.stdout_lines }}"

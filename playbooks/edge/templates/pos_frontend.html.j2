@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>POS - {{ pos_store_name }}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; }
+
+        .header {
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+            border-bottom: 2px solid #e11d48;
+            padding: 1rem 2rem;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .header h1 { font-size: 1.4rem; color: #f8fafc; }
+        .header h1 span { color: #e11d48; }
+        .header .store-info { color: #94a3b8; font-size: 0.85rem; }
+        .status-dot { width: 10px; height: 10px; background: #22c55e; border-radius: 50%; display: inline-block; margin-right: 6px; }
+
+        .dashboard { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; padding: 1.5rem 2rem; }
+        .card {
+            background: #1e293b; border-radius: 12px; padding: 1.5rem;
+            border: 1px solid #334155; transition: border-color 0.2s;
+        }
+        .card:hover { border-color: #e11d48; }
+        .card .label { color: #94a3b8; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1px; }
+        .card .value { font-size: 2rem; font-weight: 700; margin-top: 0.5rem; color: #f8fafc; }
+        .card .value.money { color: #22c55e; }
+        .card .value.alert { color: #f59e0b; }
+
+        .main-content { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; padding: 0 2rem 2rem; }
+
+        .section {
+            background: #1e293b; border-radius: 12px; padding: 1.5rem;
+            border: 1px solid #334155;
+        }
+        .section h2 { font-size: 1rem; color: #e11d48; margin-bottom: 1rem; border-bottom: 1px solid #334155; padding-bottom: 0.5rem; }
+
+        table { width: 100%; border-collapse: collapse; }
+        th { text-align: left; color: #94a3b8; font-size: 0.75rem; text-transform: uppercase; padding: 0.5rem; }
+        td { padding: 0.6rem 0.5rem; border-top: 1px solid #334155; font-size: 0.9rem; }
+        tr:hover td { background: #334155; }
+
+        .badge {
+            padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600;
+        }
+        .badge-ok { background: #064e3b; color: #34d399; }
+        .badge-low { background: #78350f; color: #fbbf24; }
+        .badge-critical { background: #7f1d1d; color: #fca5a5; }
+
+        .arch-diagram {
+            display: flex; align-items: center; justify-content: center;
+            gap: 0.5rem; padding: 1rem; flex-wrap: wrap;
+        }
+        .arch-box {
+            background: #0f172a; border: 2px solid #334155; border-radius: 10px;
+            padding: 1rem 1.5rem; text-align: center; min-width: 140px;
+        }
+        .arch-box.active { border-color: #22c55e; }
+        .arch-box .tier { font-size: 0.65rem; color: #64748b; text-transform: uppercase; letter-spacing: 1px; }
+        .arch-box .name { font-size: 1rem; font-weight: 600; margin-top: 4px; }
+        .arch-arrow { color: #e11d48; font-size: 1.5rem; }
+
+        .footer {
+            text-align: center; padding: 1rem; color: #475569; font-size: 0.75rem;
+            border-top: 1px solid #1e293b;
+        }
+
+        @media (max-width: 768px) {
+            .main-content { grid-template-columns: 1fr; }
+            .dashboard { grid-template-columns: repeat(2, 1fr); }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1><span>POS</span> {{ pos_store_name }}</h1>
+        <div class="store-info">
+            <span class="status-dot"></span>Online &mdash; Store ID: {{ pos_store_id }}
+        </div>
+    </div>
+
+    <div class="dashboard">
+        <div class="card">
+            <div class="label">Vendas Hoje</div>
+            <div class="value" id="total-vendas">--</div>
+        </div>
+        <div class="card">
+            <div class="label">Faturamento</div>
+            <div class="value money" id="faturamento">--</div>
+        </div>
+        <div class="card">
+            <div class="label">Produtos Cadastrados</div>
+            <div class="value" id="total-produtos">--</div>
+        </div>
+        <div class="card">
+            <div class="label">Itens em Estoque</div>
+            <div class="value" id="itens-estoque">--</div>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="section">
+            <h2>Produtos</h2>
+            <table>
+                <thead>
+                    <tr><th>Produto</th><th>Preço</th><th>Estoque</th></tr>
+                </thead>
+                <tbody id="produtos-table"></tbody>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>Arquitetura da Aplicação</h2>
+            <div class="arch-diagram">
+                <div class="arch-box active">
+                    <div class="tier">Camada 1</div>
+                    <div class="name">Nginx</div>
+                    <div class="tier">Frontend :80</div>
+                </div>
+                <div class="arch-arrow">&#9654;</div>
+                <div class="arch-box active">
+                    <div class="tier">Camada 2</div>
+                    <div class="name">Flask API</div>
+                    <div class="tier">Backend :{{ pos_app_port }}</div>
+                </div>
+                <div class="arch-arrow">&#9654;</div>
+                <div class="arch-box active">
+                    <div class="tier">Camada 3</div>
+                    <div class="name">MariaDB</div>
+                    <div class="tier">Database :3306</div>
+                </div>
+            </div>
+
+            <h2 style="margin-top: 1.5rem;">Estoque Baixo</h2>
+            <table>
+                <thead>
+                    <tr><th>Produto</th><th>Restante</th></tr>
+                </thead>
+                <tbody id="estoque-baixo"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="footer">
+        POS Edge Application &mdash; Deployed by Ansible Automation Platform &mdash; {{ pos_store_name }} ({{ pos_store_id }})
+    </div>
+
+    <script>
+        async function loadDashboard() {
+            try {
+                const res = await fetch('/api/dashboard');
+                const data = await res.json();
+                document.getElementById('total-vendas').textContent = data.vendas;
+                document.getElementById('faturamento').textContent = 'R$ ' + data.faturamento.toFixed(2);
+                document.getElementById('total-produtos').textContent = data.total_produtos;
+                document.getElementById('itens-estoque').textContent = data.itens_estoque;
+
+                const tbody = document.getElementById('estoque-baixo');
+                tbody.innerHTML = data.estoque_baixo.length === 0
+                    ? '<tr><td colspan="2" style="color:#22c55e">Estoque OK</td></tr>'
+                    : data.estoque_baixo.map(p =>
+                        `<tr><td>${p.nome}</td><td><span class="badge ${p.estoque < 5 ? 'badge-critical' : 'badge-low'}">${p.estoque} un</span></td></tr>`
+                    ).join('');
+            } catch (e) {
+                document.getElementById('total-vendas').textContent = 'ERR';
+            }
+        }
+
+        async function loadProdutos() {
+            try {
+                const res = await fetch('/api/produtos');
+                const data = await res.json();
+                const tbody = document.getElementById('produtos-table');
+                tbody.innerHTML = data.map(p => {
+                    let badge = 'badge-ok';
+                    if (p.estoque < 5) badge = 'badge-critical';
+                    else if (p.estoque < 20) badge = 'badge-low';
+                    return `<tr>
+                        <td>${p.nome}</td>
+                        <td>R$ ${parseFloat(p.preco).toFixed(2)}</td>
+                        <td><span class="badge ${badge}">${p.estoque}</span></td>
+                    </tr>`;
+                }).join('');
+            } catch (e) {
+                document.getElementById('produtos-table').innerHTML = '<tr><td colspan="3">Erro ao carregar</td></tr>';
+            }
+        }
+
+        loadDashboard();
+        loadProdutos();
+        setInterval(loadDashboard, 30000);
+    </script>
+</body>
+</html>
