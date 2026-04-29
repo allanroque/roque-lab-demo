@@ -1,0 +1,111 @@
+---
+# Playbook: Coleta de dados dos switches Cisco da loja
+#
+# Coleta status real de SNMP, NTP, DNS, Banner, VLANs e salva
+# como JSON no servidor infra-interna para o dashboard.
+#
+# Variáveis para Survey do AAP:
+#   target_hosts  - Grupo da loja: loja1, loja2, etc.
+
+# --- Play 1: Coletar dados dos switches ---
+
+- name: Coletar dados dos switches Cisco
+  hosts: "{{ target_hosts }}:&cisco"
+  gather_facts: false
+
+  tasks:
+    - name: Coletar facts do dispositivo
+      cisco.ios.ios_facts:
+        gather_subset:
+          - hardware
+          - config
+      register: cisco_facts
+
+    - name: Verificar SNMP
+      cisco.ios.ios_command:
+        commands:
+          - show running-config | include snmp-server community
+      register: snmp_check
+
+    - name: Verificar NTP
+      cisco.ios.ios_command:
+        commands:
+          - show ntp status
+      register: ntp_check
+
+    - name: Verificar DNS
+      cisco.ios.ios_command:
+        commands:
+          - show running-config | include name-server
+      register: dns_check
+
+    - name: Verificar Banner
+      cisco.ios.ios_command:
+        commands:
+          - show running-config | include banner
+      register: banner_check
+
+    - name: Verificar VLANs
+      cisco.ios.ios_command:
+        commands:
+          - show vlan brief
+      register: vlan_check
+
+    - name: Armazenar dados coletados
+      ansible.builtin.set_fact:
+        switch_data:
+          hostname: "{{ cisco_facts.ansible_facts.ansible_net_hostname | default(inventory_hostname) }}"
+          ip: "{{ ansible_host }}"
+          model: "{{ cisco_facts.ansible_facts.ansible_net_model | default('Cisco IOS') }}"
+          serial: "{{ cisco_facts.ansible_facts.ansible_net_serialnum | default('N/A') }}"
+          version: "{{ cisco_facts.ansible_facts.ansible_net_version | default('N/A') }}"
+          image: "{{ cisco_facts.ansible_facts.ansible_net_image | default('N/A') }}"
+          snmp_configured: "{{ snmp_check.stdout[0] | length > 0 }}"
+          ntp_configured: "{{ 'synchronised' in (ntp_check.stdout[0] | lower) or 'synchronized' in (ntp_check.stdout[0] | lower) }}"
+          ntp_status: "{{ ntp_check.stdout[0] | regex_search('Clock is (.+)', '\\1') | default(['N/A']) | first }}"
+          dns_configured: "{{ dns_check.stdout[0] | length > 0 }}"
+          banner_configured: "{{ banner_check.stdout[0] | length > 0 }}"
+          vlans_configured: "{{ 'VLAN' in vlan_check.stdout[0] }}"
+          vlans_count: "{{ vlan_check.stdout[0] | regex_findall('\\d+\\s+\\w+') | length }}"
+
+# --- Play 2: Salvar JSON no servidor infra ---
+
+- name: Salvar dados de rede no infra-interna
+  hosts: "{{ target_hosts }}:&infra_interna"
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: Criar diretório de dados
+      ansible.builtin.file:
+        path: /usr/share/nginx/html/data
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Montar lista de switches coletados
+      ansible.builtin.set_fact:
+        collected_switches: >-
+          {{
+            groups['cisco'] | default([])
+            | intersect(groups[target_hosts] | default([]))
+            | map('extract', hostvars, 'switch_data')
+            | select('defined')
+            | list
+          }}
+
+    - name: Salvar dados dos switches em JSON
+      ansible.builtin.copy:
+        content: "{{ collected_switches | to_nice_json }}"
+        dest: /usr/share/nginx/html/data/switches.json
+        mode: "0644"
+
+    - name: Exibir resumo da coleta
+      ansible.builtin.debug:
+        msg:
+          - "====================================="
+          - "Coleta Network concluída"
+          - "Switches coletados: {{ collected_switches | length }}"
+          - "Dados: http://{{ ansible_host }}/data/switches.json"
+          - "====================================="

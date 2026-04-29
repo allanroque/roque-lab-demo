@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Infra Interna - {{ site_name | default('Edge') }}</title>
+    <style>
+        :root {
+            --bg: #06080f; --bg2: #0d1117; --card: #111827; --border: #1e293b;
+            --text: #f0f6fc; --text2: #8b949e; --muted: #4b5563;
+            --blue: #3b82f6; --green: #22c55e; --yellow: #f59e0b; --red: #ef4444; --cyan: #06b6d4;
+            --green-bg: #064e3b; --yellow-bg: #78350f; --red-bg: #7f1d1d; --blue-bg: #1e3a5f;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', -apple-system, sans-serif; background: var(--bg); color: var(--text); }
+
+        .header { background: var(--bg2); border-bottom: 2px solid var(--blue); padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
+        .header h1 { font-size: 1.2rem; } .header h1 span { color: var(--blue); }
+        .hright { display: flex; align-items: center; gap: 1rem; }
+        .badge { background: var(--blue-bg); color: var(--blue); padding: 4px 14px; border-radius: 20px; font-size: 0.78rem; font-weight: 600; }
+        .htime { color: var(--text2); font-size: 0.78rem; }
+        .hlast { color: var(--muted); font-size: 0.7rem; }
+
+        .content { padding: 1.5rem 2rem; }
+
+        .section { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 1.5rem; margin-bottom: 1.2rem; }
+        .section h2 { font-size: 0.9rem; color: var(--blue); margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); }
+
+        /* Topology */
+        .topo { display: flex; flex-direction: column; align-items: center; gap: 0.4rem; }
+        .trow { display: flex; gap: 0.8rem; justify-content: center; flex-wrap: wrap; }
+        .tpipe { width: 2px; height: 18px; background: var(--border); }
+        .tnode {
+            background: var(--bg); border: 2px solid var(--border); border-radius: 12px;
+            padding: 0.8rem 1.2rem; text-align: center; min-width: 115px; cursor: pointer;
+            transition: all 0.25s; position: relative;
+        }
+        .tnode:hover { border-color: var(--blue); transform: translateY(-2px); box-shadow: 0 4px 20px rgba(59,130,246,0.15); }
+        .tnode.active { border-color: var(--blue); box-shadow: 0 0 15px rgba(59,130,246,0.2); }
+        .tnode.static { cursor: default; } .tnode.static:hover { transform: none; box-shadow: none; border-color: var(--border); }
+        .tnode .tico { font-size: 1.4rem; } .tnode .tname { font-size: 0.8rem; font-weight: 600; margin-top: 3px; } .tnode .ttip { font-size: 0.65rem; color: var(--muted); margin-top: 2px; }
+        .dot { position: absolute; top: 8px; right: 8px; width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+        .dot::after { content: ''; position: absolute; inset: -3px; border-radius: 50%; border: 2px solid var(--green); animation: pulse 2s infinite; }
+        @keyframes pulse { 0%{opacity:1;transform:scale(1)} 100%{opacity:0;transform:scale(1.8)} }
+
+        /* Panels */
+        .panel { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 1.5rem; display: none; margin-bottom: 1.2rem; animation: fadeIn 0.3s; }
+        .panel.show { display: block; }
+        @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+        .ptitle { font-size: 0.95rem; color: var(--blue); margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 0.5rem; }
+        .pclose { margin-left: auto; cursor: pointer; color: var(--muted); font-size: 1.3rem; line-height: 1; } .pclose:hover { color: var(--red); }
+
+        .igrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.7rem; margin-bottom: 1rem; }
+        .icard { background: var(--bg); border-radius: 10px; padding: 0.8rem; border: 1px solid var(--border); }
+        .icard .il { font-size: 0.67rem; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+        .icard .iv { font-size: 0.95rem; font-weight: 600; margin-top: 0.2rem; } .icard .iv.mono { font-family: 'Courier New',monospace; color: var(--cyan); font-size: 0.85rem; }
+
+        .stitle { font-size: 0.83rem; color: var(--cyan); margin: 1rem 0 0.5rem; }
+
+        .chk { display: flex; align-items: center; gap: 0.6rem; padding: 0.45rem 0; border-bottom: 1px solid var(--border); font-size: 0.83rem; }
+        .chk:last-child { border-bottom: none; }
+        .ci { width: 21px; height: 21px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.68rem; flex-shrink: 0; }
+        .ci.ok { background: var(--green-bg); color: var(--green); } .ci.fail { background: var(--red-bg); color: var(--red); }
+        .ci.warn { background: var(--yellow-bg); color: var(--yellow); } .ci.info { background: var(--blue-bg); color: var(--blue); }
+        .cl { flex: 1; } .cv { color: var(--text2); font-family: 'Courier New',monospace; font-size: 0.78rem; }
+
+        .tabs { display: flex; gap: 0.4rem; margin-bottom: 1rem; flex-wrap: wrap; }
+        .tab { padding: 0.35rem 0.9rem; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; font-size: 0.8rem; color: var(--text2); transition: all 0.2s; }
+        .tab:hover { border-color: var(--blue); color: var(--text); }
+        .tab.active { background: var(--blue-bg); border-color: var(--blue); color: var(--blue); }
+        .tabcontent { display: none; } .tabcontent.show { display: block; }
+
+        .sgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 0.7rem; margin-bottom: 1rem; }
+        .scard { background: var(--bg); border-radius: 10px; padding: 0.8rem; border: 1px solid var(--border); display: flex; align-items: center; gap: 0.7rem; }
+        .scard .si { font-size: 1.2rem; } .scard .sn { font-weight: 600; font-size: 0.83rem; } .scard .sp { font-size: 0.68rem; color: var(--muted); }
+        .ss { margin-left: auto; padding: 2px 9px; border-radius: 10px; font-size: 0.7rem; font-weight: 600; }
+        .ss.up { background: var(--green-bg); color: var(--green); } .ss.dn { background: var(--red-bg); color: var(--red); }
+
+        .kgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.7rem; margin-bottom: 1rem; }
+        .kpi { background: var(--bg); border-radius: 10px; padding: 0.9rem; border: 1px solid var(--border); text-align: center; }
+        .kpi .kv { font-size: 1.4rem; font-weight: 700; } .kpi .kv.grn { color: var(--green); }
+        .kpi .kl { font-size: 0.67rem; color: var(--muted); text-transform: uppercase; margin-top: 0.2rem; }
+
+        .ptable { width: 100%; border-collapse: collapse; font-size: 0.76rem; font-family: 'Courier New',monospace; }
+        .ptable th { text-align: left; color: var(--muted); font-size: 0.68rem; padding: 0.35rem; text-transform: uppercase; border-bottom: 1px solid var(--border); }
+        .ptable td { padding: 0.35rem; border-bottom: 1px solid var(--border); color: var(--text2); }
+
+        .lnk { display: inline-block; padding: 5px 12px; border-radius: 8px; font-size: 0.8rem; text-decoration: none; margin-right: 0.5rem; margin-top: 0.5rem; }
+        .lnk.b { background: var(--blue-bg); color: var(--blue); } .lnk.g { background: var(--green-bg); color: var(--green); }
+
+        .loading { color: var(--text2); padding: 2rem; text-align: center; font-size: 0.85rem; }
+
+        .footer { text-align: center; padding: 1.5rem; color: var(--muted); font-size: 0.72rem; border-top: 1px solid var(--border); margin-top: 2rem; }
+        @media (max-width: 768px) { .content { padding: 1rem; } .igrid { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1><span>&#9881;</span> Infra Interna &mdash; <span id="h-site">{{ site_name | default('Edge') }}</span></h1>
+        <div class="hright">
+            <span class="hlast" id="h-last">Carregando...</span>
+            <span class="htime" id="clock"></span>
+            <span class="badge" id="h-badge">Site {{ site_id | default('---') }}</span>
+        </div>
+    </div>
+
+    <div class="content">
+        <!-- TOPOLOGIA -->
+        <div class="section">
+            <h2>&#127760; Topologia do Site &mdash; clique nos dispositivos</h2>
+            <div class="topo">
+                <div class="trow"><div class="tnode static"><span class="dot"></span><div class="tico">&#127744;</div><div class="tname">WAN</div><div class="ttip">Link Internet</div></div></div>
+                <div class="tpipe"></div>
+                <div class="trow" id="topo-switches"></div>
+                <div class="tpipe"></div>
+                <div class="trow" id="topo-servers"></div>
+            </div>
+        </div>
+
+        <!-- PAINEL SWITCHES -->
+        <div class="panel" id="p-sw">
+            <div class="ptitle">&#128421; Switches Cisco (<span id="sw-count">0</span>) <span class="pclose" onclick="hide('p-sw')">&times;</span></div>
+            <div class="tabs" id="sw-tabs"></div>
+            <div id="sw-details"></div>
+        </div>
+
+        <!-- PAINEL PDV -->
+        <div class="panel" id="p-pdv">
+            <div class="ptitle">&#128722; Servidor PDV <span class="pclose" onclick="hide('p-pdv')">&times;</span></div>
+            <div id="pdv-content"><div class="loading">Carregando dados...</div></div>
+        </div>
+
+        <!-- PAINEL INFRA -->
+        <div class="panel" id="p-infra">
+            <div class="ptitle">&#9881; Servidor Infra-Interna <span class="pclose" onclick="hide('p-infra')">&times;</span></div>
+            <div id="infra-content"><div class="loading">Carregando dados...</div></div>
+        </div>
+    </div>
+
+    <div class="footer" id="footer">Infra Interna Edge &mdash; Ansible Automation Platform</div>
+
+    <script>
+        let SW=[], PDV={}, INFRA={};
+
+        // Clock
+        function tick() { document.getElementById('clock').textContent = new Date().toLocaleString('pt-BR'); }
+        tick(); setInterval(tick, 1000);
+
+        // Helpers
+        function hide(id) { document.getElementById(id).classList.remove('show'); document.querySelectorAll('.tnode:not(.static)').forEach(n=>n.classList.remove('active')); }
+        function show(id) { document.querySelectorAll('.panel').forEach(p=>p.classList.remove('show')); document.getElementById(id).classList.add('show'); }
+        function memColor(pct) { return pct < 80 ? 'var(--green)' : pct < 90 ? 'var(--yellow)' : 'var(--red)'; }
+        function svcBadge(s) { return s === 'active' ? '<span class="ss up">ATIVO</span>' : '<span class="ss dn">DOWN</span>'; }
+        function chkIcon(ok) { return ok ? '<div class="ci ok">&#10003;</div>' : '<div class="ci fail">&#10007;</div>'; }
+        function days(s) { return Math.floor(s / 86400); }
+
+        // Topology
+        function buildTopo() {
+            let swHtml = '';
+            SW.forEach((s,i) => {
+                swHtml += `<div class="tnode" onclick="openSW(${i})" id="tsw${i}"><span class="dot"></span><div class="tico">&#128421;</div><div class="tname">${s.hostname}</div><div class="ttip">${s.ip}</div></div>`;
+            });
+            if (!SW.length) swHtml = '<div class="tnode static"><span class="dot"></span><div class="tico">&#128421;</div><div class="tname">Switches</div><div class="ttip">Sem dados</div></div>';
+            document.getElementById('topo-switches').innerHTML = swHtml;
+
+            let srvHtml = '';
+            if (PDV.hostname) srvHtml += `<div class="tnode" onclick="openPDV()" id="tpdv"><span class="dot"></span><div class="tico">&#128722;</div><div class="tname">PDV</div><div class="ttip">${PDV.public_ip||PDV.ip||''}</div></div>`;
+            srvHtml += `<div class="tnode" onclick="openInfra()" id="tinfra"><span class="dot"></span><div class="tico">&#9881;</div><div class="tname">Infra</div><div class="ttip">${INFRA.ip||''}</div></div>`;
+            document.getElementById('topo-servers').innerHTML = srvHtml;
+        }
+
+        // Switches panel
+        function buildSW() {
+            document.getElementById('sw-count').textContent = SW.length;
+            let tabs = '', details = '';
+            SW.forEach((s,i) => {
+                tabs += `<div class="tab ${i===0?'active':''}" onclick="swTab(${i})">${s.hostname}</div>`;
+                details += `<div class="tabcontent ${i===0?'show':''}" id="swd${i}">
+                    <div class="igrid">
+                        <div class="icard"><div class="il">Hostname</div><div class="iv">${s.hostname}</div></div>
+                        <div class="icard"><div class="il">IP</div><div class="iv mono">${s.ip}</div></div>
+                        <div class="icard"><div class="il">Modelo</div><div class="iv">${s.model}</div></div>
+                        <div class="icard"><div class="il">Serial</div><div class="iv mono">${s.serial}</div></div>
+                        <div class="icard"><div class="il">IOS Version</div><div class="iv mono">${s.version}</div></div>
+                        <div class="icard"><div class="il">Image</div><div class="iv mono" style="font-size:0.75rem">${s.image}</div></div>
+                    </div>
+                    <div class="stitle">Checklist de Configuração</div>
+                    <div class="chk">${chkIcon(true)}<span class="cl">Conectividade</span><span class="cv">Online</span></div>
+                    <div class="chk">${chkIcon(s.snmp_configured)}<span class="cl">SNMP</span><span class="cv">${s.snmp_configured?'Configurado':'Não configurado'}</span></div>
+                    <div class="chk">${chkIcon(s.ntp_configured)}<span class="cl">NTP</span><span class="cv">${s.ntp_status||'N/A'}</span></div>
+                    <div class="chk">${chkIcon(s.dns_configured)}<span class="cl">DNS</span><span class="cv">${s.dns_configured?'Configurado':'Não configurado'}</span></div>
+                    <div class="chk">${chkIcon(s.banner_configured)}<span class="cl">Banner</span><span class="cv">${s.banner_configured?'Configurado':'Ausente'}</span></div>
+                    <div class="chk">${chkIcon(s.vlans_configured)}<span class="cl">VLANs</span><span class="cv">${s.vlans_configured?'Ativas ('+s.vlans_count+')':'Verificar'}</span></div>
+                    <div class="chk"><div class="ci info">&#8594;</div><span class="cl">Syslog</span><span class="cv">${INFRA.ip||'--'}:514</span></div>
+                    <div class="chk"><div class="ci info">&#8594;</div><span class="cl">TFTP Backup</span><span class="cv">${INFRA.ip||'--'}:69</span></div>
+                </div>`;
+            });
+            document.getElementById('sw-tabs').innerHTML = tabs;
+            document.getElementById('sw-details').innerHTML = details;
+        }
+
+        function swTab(i) {
+            document.querySelectorAll('.tab').forEach((t,j)=>t.classList.toggle('active',j===i));
+            document.querySelectorAll('.tabcontent').forEach((d,j)=>d.classList.toggle('show',j===i));
+            document.querySelectorAll('.tnode:not(.static)').forEach(n=>n.classList.remove('active'));
+            const n=document.getElementById('tsw'+i); if(n) n.classList.add('active');
+        }
+
+        function openSW(i) {
+            document.querySelectorAll('.tnode:not(.static)').forEach(n=>n.classList.remove('active'));
+            document.getElementById('tsw'+i).classList.add('active');
+            show('p-sw'); swTab(i);
+        }
+
+        // PDV panel
+        function buildPDV() {
+            if (!PDV.hostname) { document.getElementById('pdv-content').innerHTML='<div class="loading">Nenhum dado coletado. Execute a coleta Linux.</div>'; return; }
+            const mp = Math.round(((PDV.memory_total_mb-PDV.memory_free_mb)/PDV.memory_total_mb)*100);
+            const dp = parseInt((PDV.disk_usage||'0').replace('%',''));
+            const pip = PDV.public_ip || PDV.ip;
+
+            let procs = '';
+            (PDV.top_processes||[]).forEach(p => {
+                const c = p.split(/\s+/);
+                if (c.length>10) procs += `<tr><td>${c[0]}</td><td>${c[2]}</td><td>${c[3]}</td><td>${c.slice(10).join(' ').substring(0,50)}</td></tr>`;
+            });
+
+            document.getElementById('pdv-content').innerHTML = `
+                <div class="igrid">
+                    <div class="icard"><div class="il">Hostname</div><div class="iv">${PDV.hostname}</div></div>
+                    <div class="icard"><div class="il">IP</div><div class="iv mono">${pip}</div></div>
+                    <div class="icard"><div class="il">SO</div><div class="iv">${PDV.os}</div></div>
+                    <div class="icard"><div class="il">Kernel</div><div class="iv mono">${PDV.kernel}</div></div>
+                    <div class="icard"><div class="il">CPUs</div><div class="iv">${PDV.cpu_count} vCPUs</div></div>
+                    <div class="icard"><div class="il">Memória</div><div class="iv" style="color:${memColor(mp)}">${mp}% de ${PDV.memory_total_mb}MB</div></div>
+                    <div class="icard"><div class="il">Disco</div><div class="iv" style="color:${memColor(dp)}">${PDV.disk_usage}</div></div>
+                    <div class="icard"><div class="il">Uptime</div><div class="iv">${days(PDV.uptime_seconds)} dias</div></div>
+                </div>
+                <div class="stitle">Serviços - App 3 Camadas</div>
+                <div class="sgrid">
+                    <div class="scard"><div class="si">&#127760;</div><div><div class="sn">Nginx</div><div class="sp">Frontend :80</div></div>${svcBadge(PDV.services.nginx)}</div>
+                    <div class="scard"><div class="si">&#9881;</div><div><div class="sn">Flask API</div><div class="sp">Backend :5000</div></div>${svcBadge(PDV.services.pos_api)}</div>
+                    <div class="scard"><div class="si">&#128451;</div><div><div class="sn">MariaDB</div><div class="sp">Database :3306</div></div>${svcBadge(PDV.services.mariadb)}</div>
+                </div>
+                <div class="stitle">KPIs da Loja (ao vivo)</div>
+                <div class="kgrid">
+                    <div class="kpi"><div class="kv" id="kv">--</div><div class="kl">Vendas</div></div>
+                    <div class="kpi"><div class="kv grn" id="kf">--</div><div class="kl">Faturamento</div></div>
+                    <div class="kpi"><div class="kv" id="kp">--</div><div class="kl">Produtos</div></div>
+                    <div class="kpi"><div class="kv" id="ke">--</div><div class="kl">Estoque</div></div>
+                </div>
+                <div class="stitle">Top 10 Processos (memória)</div>
+                <table class="ptable"><thead><tr><th>User</th><th>%CPU</th><th>%MEM</th><th>Comando</th></tr></thead><tbody>${procs}</tbody></table>
+                <div style="margin-top:1rem;padding-top:0.8rem;border-top:1px solid var(--border)">
+                    <a class="lnk b" href="http://${pip}/" target="_blank">&#128279; App POS</a>
+                    <a class="lnk g" href="http://${pip}/api/health" target="_blank">&#128147; Health Check</a>
+                </div>`;
+
+            loadKPIs(pip);
+        }
+
+        async function loadKPIs(ip) {
+            try {
+                const r = await fetch('http://'+ip+'/api/dashboard');
+                const d = await r.json();
+                document.getElementById('kv').textContent = d.vendas;
+                document.getElementById('kf').textContent = 'R$ '+d.faturamento.toFixed(2);
+                document.getElementById('kp').textContent = d.total_produtos;
+                document.getElementById('ke').textContent = d.itens_estoque;
+            } catch(e) { ['kv','kf','kp','ke'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent='ERR';}); }
+        }
+
+        function openPDV() {
+            document.querySelectorAll('.tnode:not(.static)').forEach(n=>n.classList.remove('active'));
+            const n=document.getElementById('tpdv'); if(n) n.classList.add('active');
+            show('p-pdv');
+        }
+
+        // Infra panel
+        function buildInfra() {
+            if (!INFRA.hostname) { document.getElementById('infra-content').innerHTML='<div class="loading">Nenhum dado coletado. Execute a coleta Linux.</div>'; return; }
+            const mp = Math.round(((INFRA.memory_total_mb-INFRA.memory_free_mb)/INFRA.memory_total_mb)*100);
+            const dp = parseInt((INFRA.disk_usage||'0').replace('%',''));
+            const svc = INFRA.services||{};
+
+            document.getElementById('infra-content').innerHTML = `
+                <div class="igrid">
+                    <div class="icard"><div class="il">Hostname</div><div class="iv">${INFRA.hostname}</div></div>
+                    <div class="icard"><div class="il">IP</div><div class="iv mono">${INFRA.ip}</div></div>
+                    <div class="icard"><div class="il">SO</div><div class="iv">${INFRA.os}</div></div>
+                    <div class="icard"><div class="il">Kernel</div><div class="iv mono">${INFRA.kernel}</div></div>
+                    <div class="icard"><div class="il">CPUs</div><div class="iv">${INFRA.cpu_count} vCPUs</div></div>
+                    <div class="icard"><div class="il">Memória</div><div class="iv" style="color:${memColor(mp)}">${mp}% de ${INFRA.memory_total_mb}MB</div></div>
+                    <div class="icard"><div class="il">Disco</div><div class="iv" style="color:${memColor(dp)}">${INFRA.disk_usage}</div></div>
+                    <div class="icard"><div class="il">Uptime</div><div class="iv">${days(INFRA.uptime_seconds)} dias</div></div>
+                </div>
+                <div class="stitle">Serviços</div>
+                <div class="sgrid">
+                    <div class="scard"><div class="si">&#128220;</div><div><div class="sn">Rsyslog</div><div class="sp">Syslog :514</div></div>${svcBadge(svc.rsyslog)}</div>
+                    <div class="scard"><div class="si">&#9200;</div><div><div class="sn">Chrony</div><div class="sp">NTP :123</div></div>${svcBadge(svc.chronyd)}</div>
+                    <div class="scard"><div class="si">&#128190;</div><div><div class="sn">TFTP</div><div class="sp">TFTP :69</div></div>${svcBadge(svc.tftp)}</div>
+                    <div class="scard"><div class="si">&#127760;</div><div><div class="sn">Nginx</div><div class="sp">Painel :80</div></div>${svcBadge(svc.nginx)}</div>
+                </div>
+                <div class="stitle">Checklist Infra</div>
+                <div class="chk"><div class="ci ok">&#10003;</div><span class="cl">Syslog recebendo logs</span><span class="cv">/var/log/remote/</span></div>
+                <div class="chk">${chkIcon(INFRA.chrony_synced)}<span class="cl">NTP sincronizado</span><span class="cv">${INFRA.ntp_upstream}</span></div>
+                <div class="chk"><div class="ci ok">&#10003;</div><span class="cl">NTP servindo rede local</span><span class="cv">allow ${INFRA.site_network}</span></div>
+                <div class="chk"><div class="ci ok">&#10003;</div><span class="cl">TFTP configs</span><span class="cv">/var/lib/tftpboot/configs/</span></div>
+                <div class="chk"><div class="ci ok">&#10003;</div><span class="cl">TFTP firmware</span><span class="cv">/var/lib/tftpboot/firmware/</span></div>
+                <div class="chk"><div class="ci info">&#128339;</div><span class="cl">Retenção de logs</span><span class="cv">${INFRA.syslog_retention} dias</span></div>`;
+
+            document.getElementById('h-site').textContent = INFRA.site_name || 'Edge';
+            document.getElementById('h-badge').textContent = 'Site ' + (INFRA.site_id || '---');
+            document.getElementById('h-last').textContent = 'Última coleta: ' + (INFRA.collected_at || '--');
+            document.getElementById('footer').textContent = `Infra Interna Edge — ${INFRA.site_name} (${INFRA.site_id}) — Ansible Automation Platform`;
+        }
+
+        function openInfra() {
+            document.querySelectorAll('.tnode:not(.static)').forEach(n=>n.classList.remove('active'));
+            const n=document.getElementById('tinfra'); if(n) n.classList.add('active');
+            show('p-infra');
+        }
+
+        // Load data
+        async function loadAll() {
+            try { SW = await (await fetch('/data/switches.json')).json(); } catch(e) { SW=[]; }
+            try { PDV = await (await fetch('/data/pdv.json')).json(); } catch(e) { PDV={}; }
+            try { INFRA = await (await fetch('/data/infra.json')).json(); } catch(e) { INFRA={}; }
+
+            buildTopo();
+            buildSW();
+            buildPDV();
+            buildInfra();
+        }
+
+        loadAll();
+    </script>
+</body>
+</html>

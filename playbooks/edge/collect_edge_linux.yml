@@ -1,0 +1,166 @@
+---
+# Playbook: Coleta de dados dos servidores Linux da loja
+#
+# Coleta status do PDV e infra-interna e salva como JSON
+# no servidor infra-interna para o dashboard.
+#
+# Variáveis para Survey do AAP:
+#   target_hosts  - Grupo da loja: loja1, loja2, etc.
+#   site_name     - Nome do site
+#   site_id       - ID do site
+
+# --- Play 1: Coletar dados do servidor PDV ---
+
+- name: Coletar dados do servidor PDV
+  hosts: "{{ target_hosts }}:&pdv"
+  gather_facts: true
+  become: true
+
+  tasks:
+    - name: Verificar status dos serviços PDV
+      ansible.builtin.command:
+        cmd: "systemctl is-active {{ item }}"
+      loop:
+        - nginx
+        - mariadb
+        - pos-api
+      register: pdv_svc_check
+      changed_when: false
+      failed_when: false
+
+    - name: Coletar uso de disco
+      ansible.builtin.command:
+        cmd: df -h --output=pcent /
+      register: disk_check
+      changed_when: false
+
+    - name: Coletar processos principais
+      ansible.builtin.command:
+        cmd: ps aux --sort=-%mem --no-headers
+      register: proc_check
+      changed_when: false
+
+    - name: Armazenar dados do PDV
+      ansible.builtin.set_fact:
+        pdv_data:
+          hostname: "{{ ansible_hostname }}"
+          ip: "{{ ansible_default_ipv4.address | default(ansible_host) }}"
+          public_ip: "{{ ansible_host }}"
+          os: "{{ ansible_distribution }} {{ ansible_distribution_version }}"
+          kernel: "{{ ansible_kernel }}"
+          cpu_count: "{{ ansible_processor_vcpus }}"
+          memory_total_mb: "{{ ansible_memtotal_mb }}"
+          memory_free_mb: "{{ ansible_memfree_mb }}"
+          disk_usage: "{{ disk_check.stdout_lines[-1] | trim }}"
+          uptime_seconds: "{{ ansible_uptime_seconds | default(0) }}"
+          services:
+            nginx: "{{ pdv_svc_check.results[0].stdout | default('inactive') }}"
+            mariadb: "{{ pdv_svc_check.results[1].stdout | default('inactive') }}"
+            pos_api: "{{ pdv_svc_check.results[2].stdout | default('inactive') }}"
+          top_processes: "{{ proc_check.stdout_lines[:10] }}"
+
+# --- Play 2: Coletar dados e salvar tudo no infra ---
+
+- name: Salvar dados Linux no infra-interna
+  hosts: "{{ target_hosts }}:&infra_interna"
+  gather_facts: true
+  become: true
+
+  vars:
+    site_name: "{{ site_name | default('Loja Demo') }}"
+    site_id: "{{ site_id | default('001') }}"
+    ntp_upstream: "{{ ntp_upstream | default('a.ntp.br') }}"
+    syslog_retention: "{{ syslog_retention | default('30') }}"
+    site_network: "{{ site_network | default('192.168.100.0/24') }}"
+
+  tasks:
+    - name: Criar diretório de dados
+      ansible.builtin.file:
+        path: /usr/share/nginx/html/data
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Verificar status dos serviços infra
+      ansible.builtin.command:
+        cmd: "systemctl is-active {{ item }}"
+      loop:
+        - rsyslog
+        - chronyd
+        - tftp.socket
+        - nginx
+      register: infra_svc_check
+      changed_when: false
+      failed_when: false
+
+    - name: Verificar sincronização NTP
+      ansible.builtin.command:
+        cmd: chronyc tracking
+      register: chrony_check
+      changed_when: false
+      failed_when: false
+
+    - name: Coletar uso de disco
+      ansible.builtin.command:
+        cmd: df -h --output=pcent /
+      register: disk_check
+      changed_when: false
+
+    - name: Montar dados do PDV coletado
+      ansible.builtin.set_fact:
+        collected_pdv: >-
+          {{
+            groups['pdv'] | default([])
+            | intersect(groups[target_hosts] | default([]))
+            | map('extract', hostvars, 'pdv_data')
+            | select('defined')
+            | first
+            | default({})
+          }}
+
+    - name: Salvar dados do PDV em JSON
+      ansible.builtin.copy:
+        content: "{{ collected_pdv | to_nice_json }}"
+        dest: /usr/share/nginx/html/data/pdv.json
+        mode: "0644"
+
+    - name: Salvar dados do infra em JSON
+      ansible.builtin.copy:
+        content: |
+          {{ {
+            "hostname": ansible_hostname,
+            "ip": ansible_default_ipv4.address | default(ansible_host),
+            "os": ansible_distribution ~ " " ~ ansible_distribution_version,
+            "kernel": ansible_kernel,
+            "cpu_count": ansible_processor_vcpus,
+            "memory_total_mb": ansible_memtotal_mb,
+            "memory_free_mb": ansible_memfree_mb,
+            "disk_usage": disk_check.stdout_lines[-1] | trim,
+            "uptime_seconds": ansible_uptime_seconds | default(0),
+            "site_name": site_name,
+            "site_id": site_id,
+            "ntp_upstream": ntp_upstream,
+            "syslog_retention": syslog_retention,
+            "site_network": site_network,
+            "chrony_synced": "Normal" in chrony_check.stdout | default(""),
+            "services": {
+              "rsyslog": infra_svc_check.results[0].stdout | default("inactive"),
+              "chronyd": infra_svc_check.results[1].stdout | default("inactive"),
+              "tftp": infra_svc_check.results[2].stdout | default("inactive"),
+              "nginx": infra_svc_check.results[3].stdout | default("inactive")
+            },
+            "collected_at": ansible_date_time.iso8601
+          } | to_nice_json }}
+        dest: /usr/share/nginx/html/data/infra.json
+        mode: "0644"
+
+    - name: Exibir resumo da coleta
+      ansible.builtin.debug:
+        msg:
+          - "====================================="
+          - "Coleta Linux concluída"
+          - "PDV: {{ collected_pdv.hostname | default('não coletado') }} ({{ collected_pdv.public_ip | default('N/A') }})"
+          - "Infra: {{ ansible_hostname }}"
+          - "Dados: http://{{ ansible_host }}/data/"
+          - "====================================="
