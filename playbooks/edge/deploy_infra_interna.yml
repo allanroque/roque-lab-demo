@@ -16,7 +16,7 @@
 #   site_network     - Rede local do site (default: "192.168.100.0/24")
 
 - name: Deploy servidor Infra-Interna - Edge
-  hosts: "{{ target_hosts | default('infra-interna') }}:&infra-interna"
+  hosts: "{{ target_hosts | default('infra_interna') }}:&infra_interna"
   gather_facts: true
   become: true
 
