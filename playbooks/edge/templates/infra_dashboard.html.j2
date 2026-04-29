@@ -5,248 +5,401 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Infra Interna - {{ site_name }}</title>
     <style>
+        :root {
+            --bg: #06080f; --bg2: #0d1117; --card: #111827; --border: #1e293b;
+            --text: #f0f6fc; --text2: #8b949e; --muted: #4b5563;
+            --blue: #3b82f6; --green: #22c55e; --yellow: #f59e0b; --red: #ef4444; --cyan: #06b6d4; --purple: #8b5cf6;
+            --green-bg: #064e3b; --yellow-bg: #78350f; --red-bg: #7f1d1d; --blue-bg: #1e3a5f;
+        }
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', sans-serif; background: #0a0e1a; color: #c9d1d9; min-height: 100vh; }
+        body { font-family: 'Segoe UI', -apple-system, sans-serif; background: var(--bg); color: var(--text); }
 
-        .header {
-            background: linear-gradient(135deg, #111827 0%, #0a0e1a 100%);
-            border-bottom: 2px solid #2563eb;
-            padding: 1.2rem 2rem;
-            display: flex; justify-content: space-between; align-items: center;
-        }
-        .header h1 { font-size: 1.3rem; color: #f0f6fc; }
-        .header h1 span { color: #3b82f6; }
-        .header .site-badge {
-            background: #1e3a5f; color: #58a6ff; padding: 4px 14px;
-            border-radius: 20px; font-size: 0.8rem; font-weight: 600;
-        }
+        .header { background: var(--bg2); border-bottom: 2px solid var(--blue); padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; }
+        .header h1 { font-size: 1.2rem; } .header h1 span { color: var(--blue); }
+        .header-right { display: flex; align-items: center; gap: 1rem; }
+        .site-badge { background: var(--blue-bg); color: var(--blue); padding: 4px 14px; border-radius: 20px; font-size: 0.78rem; font-weight: 600; }
+        .header-time { color: var(--text2); font-size: 0.78rem; }
 
-        .services-grid {
-            display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 1.2rem; padding: 1.5rem 2rem;
-        }
+        .content { padding: 1.5rem 2rem; }
 
-        .service-card {
-            background: #111827; border-radius: 14px; padding: 1.5rem;
-            border: 1px solid #1e293b; position: relative; overflow: hidden;
-            transition: border-color 0.3s, transform 0.2s;
+        /* Topology */
+        .topo-section { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 1.5rem; margin-bottom: 1.5rem; }
+        .topo-section h2 { font-size: 0.9rem; color: var(--blue); margin-bottom: 1.2rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); }
+        .topo { display: flex; flex-direction: column; align-items: center; gap: 0.4rem; }
+        .topo-row { display: flex; gap: 0.8rem; justify-content: center; flex-wrap: wrap; }
+        .topo-pipe { width: 2px; height: 18px; background: var(--border); }
+        .topo-node {
+            background: var(--bg); border: 2px solid var(--border); border-radius: 12px;
+            padding: 0.8rem 1.2rem; text-align: center; min-width: 120px; cursor: pointer;
+            transition: all 0.25s; position: relative;
         }
-        .service-card:hover { border-color: #3b82f6; transform: translateY(-2px); }
-        .service-card::before {
-            content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
-        }
-        .service-card.syslog::before { background: linear-gradient(90deg, #f59e0b, #ef4444); }
-        .service-card.ntp::before { background: linear-gradient(90deg, #3b82f6, #06b6d4); }
-        .service-card.tftp::before { background: linear-gradient(90deg, #10b981, #34d399); }
-        .service-card.web::before { background: linear-gradient(90deg, #8b5cf6, #a78bfa); }
+        .topo-node:hover { border-color: var(--blue); transform: translateY(-2px); box-shadow: 0 4px 20px rgba(59,130,246,0.15); }
+        .topo-node.active { border-color: var(--blue); box-shadow: 0 0 15px rgba(59,130,246,0.2); }
+        .topo-node .icon { font-size: 1.5rem; }
+        .topo-node .tname { font-size: 0.82rem; font-weight: 600; margin-top: 4px; }
+        .topo-node .tip { font-size: 0.65rem; color: var(--muted); margin-top: 2px; }
+        .topo-node .pulse { position: absolute; top: 8px; right: 8px; width: 8px; height: 8px; background: var(--green); border-radius: 50%; }
+        .topo-node .pulse::after { content: ''; position: absolute; inset: -3px; border-radius: 50%; border: 2px solid var(--green); animation: pulse 2s infinite; }
+        @keyframes pulse { 0% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(1.8); } }
+        .topo-node.no-click { cursor: default; }
+        .topo-node.no-click:hover { transform: none; box-shadow: none; border-color: var(--border); }
 
-        .service-icon { font-size: 2rem; margin-bottom: 0.8rem; }
-        .service-name { font-size: 1.1rem; font-weight: 700; color: #f0f6fc; margin-bottom: 0.3rem; }
-        .service-desc { font-size: 0.82rem; color: #6b7280; margin-bottom: 1rem; line-height: 1.4; }
+        /* Panels */
+        .panels { display: grid; grid-template-columns: 1fr; gap: 1.2rem; }
+        .panel { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 1.5rem; display: none; animation: fadeIn 0.3s; }
+        .panel.visible { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .panel h2 { font-size: 0.95rem; color: var(--blue); margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 0.5rem; }
+        .panel-close { margin-left: auto; cursor: pointer; color: var(--muted); font-size: 1.2rem; } .panel-close:hover { color: var(--red); }
 
-        .service-details { display: flex; flex-direction: column; gap: 0.4rem; }
-        .detail-row {
-            display: flex; justify-content: space-between; align-items: center;
-            padding: 0.3rem 0; border-top: 1px solid #1e293b; font-size: 0.82rem;
-        }
-        .detail-label { color: #6b7280; }
-        .detail-value { color: #c9d1d9; font-family: 'Courier New', monospace; font-size: 0.8rem; }
-        .port-badge {
-            background: #1e3a5f; color: #58a6ff; padding: 2px 10px;
-            border-radius: 10px; font-size: 0.75rem; font-weight: 600;
-        }
+        /* Info grid */
+        .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; margin-bottom: 1rem; }
+        .info-card { background: var(--bg); border-radius: 10px; padding: 1rem; border: 1px solid var(--border); }
+        .info-card .label { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+        .info-card .val { font-size: 1.1rem; font-weight: 600; margin-top: 0.3rem; word-break: break-all; }
+        .info-card .val.mono { font-family: 'Courier New', monospace; color: var(--cyan); font-size: 0.95rem; }
 
-        .status-section {
-            padding: 0 2rem 1.5rem;
-        }
-        .status-card {
-            background: #111827; border-radius: 14px; padding: 1.5rem;
-            border: 1px solid #1e293b;
-        }
-        .status-card h2 {
-            font-size: 0.95rem; color: #3b82f6; margin-bottom: 1rem;
-            padding-bottom: 0.5rem; border-bottom: 1px solid #1e293b;
-        }
+        /* Checklist */
+        .checklist { margin-top: 0.5rem; }
+        .check-item { display: flex; align-items: center; gap: 0.6rem; padding: 0.55rem 0; border-bottom: 1px solid var(--border); font-size: 0.85rem; }
+        .check-item:last-child { border-bottom: none; }
+        .check-icon { width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.7rem; flex-shrink: 0; }
+        .check-icon.ok { background: var(--green-bg); color: var(--green); }
+        .check-icon.fail { background: var(--red-bg); color: var(--red); }
+        .check-icon.warn { background: var(--yellow-bg); color: var(--yellow); }
+        .check-icon.info { background: var(--blue-bg); color: var(--blue); }
+        .check-label { flex: 1; }
+        .check-val { color: var(--text2); font-family: 'Courier New', monospace; font-size: 0.8rem; }
 
-        .arch-row {
-            display: flex; align-items: center; justify-content: center;
-            gap: 0.8rem; padding: 1.2rem 0; flex-wrap: wrap;
+        /* Switch tabs */
+        .switch-tabs { display: flex; gap: 0.4rem; margin-bottom: 1rem; flex-wrap: wrap; }
+        .switch-tab {
+            padding: 0.4rem 1rem; background: var(--bg); border: 1px solid var(--border);
+            border-radius: 8px; cursor: pointer; font-size: 0.82rem; color: var(--text2); transition: all 0.2s;
         }
-        .arch-node {
-            background: #0a0e1a; border: 2px solid #1e293b; border-radius: 12px;
-            padding: 1rem 1.3rem; text-align: center; min-width: 130px;
-            transition: border-color 0.3s;
-        }
-        .arch-node:hover { border-color: #3b82f6; }
-        .arch-node .label { font-size: 0.65rem; color: #4b5563; text-transform: uppercase; letter-spacing: 1px; }
-        .arch-node .name { font-size: 0.95rem; font-weight: 700; color: #f0f6fc; margin-top: 4px; }
-        .arch-node .port { font-size: 0.7rem; color: #6b7280; margin-top: 2px; }
-        .arch-connector { color: #3b82f6; font-size: 1rem; }
+        .switch-tab:hover { border-color: var(--blue); color: var(--text); }
+        .switch-tab.active { background: var(--blue-bg); border-color: var(--blue); color: var(--blue); }
+        .switch-detail { display: none; } .switch-detail.visible { display: block; }
 
-        .topology {
-            display: flex; flex-direction: column; align-items: center; gap: 0.5rem;
-            padding: 1rem 0;
-        }
-        .topo-level {
-            display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap;
-        }
-        .topo-line { width: 2px; height: 20px; background: #1e293b; }
+        /* Services grid */
+        .svc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.8rem; margin-bottom: 1rem; }
+        .svc-card { background: var(--bg); border-radius: 10px; padding: 1rem; border: 1px solid var(--border); display: flex; align-items: center; gap: 0.8rem; }
+        .svc-card .svc-icon { font-size: 1.5rem; }
+        .svc-card .svc-name { font-weight: 600; font-size: 0.85rem; }
+        .svc-card .svc-port { font-size: 0.72rem; color: var(--muted); }
+        .svc-card .svc-status { margin-left: auto; padding: 2px 10px; border-radius: 10px; font-size: 0.72rem; font-weight: 600; }
+        .svc-card .svc-status.up { background: var(--green-bg); color: var(--green); }
+        .svc-card .svc-status.down { background: var(--red-bg); color: var(--red); }
 
-        .footer {
-            text-align: center; padding: 1.2rem; color: #374151;
-            font-size: 0.75rem; border-top: 1px solid #111827;
-        }
-        .footer span { color: #3b82f6; }
+        /* PDV live data */
+        .pdv-kpi { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.8rem; margin-bottom: 1rem; }
+        .kpi { background: var(--bg); border-radius: 10px; padding: 1rem; border: 1px solid var(--border); text-align: center; }
+        .kpi .kval { font-size: 1.6rem; font-weight: 700; } .kpi .kval.green { color: var(--green); }
+        .kpi .klabel { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; margin-top: 0.2rem; }
 
-        @media (max-width: 640px) {
-            .services-grid { grid-template-columns: 1fr; }
-            .header { flex-direction: column; gap: 0.5rem; text-align: center; }
-        }
+        .footer { text-align: center; padding: 1.5rem; color: var(--muted); font-size: 0.72rem; border-top: 1px solid var(--border); margin-top: 2rem; }
+
+        @media (max-width: 768px) { .content { padding: 1rem; } .info-grid { grid-template-columns: 1fr; } }
     </style>
 </head>
 <body>
     <div class="header">
-        <h1><span>&#9881;</span> Infra Interna &mdash; {{ site_name }}</h1>
-        <div class="site-badge">Site {{ site_id }}</div>
-    </div>
-
-    <div class="services-grid">
-        <div class="service-card syslog">
-            <div class="service-icon">&#128220;</div>
-            <div class="service-name">Syslog</div>
-            <div class="service-desc">Concentrador de logs do site. Recebe logs de switches, routers, PDV e servidores via UDP/TCP.</div>
-            <div class="service-details">
-                <div class="detail-row">
-                    <span class="detail-label">Serviço</span>
-                    <span class="detail-value">rsyslog</span>
-                </div>
-                <div class="detail-row">
-                    <span class="detail-label">Porta</span>
-                    <span class="port-badge">UDP/TCP 514</span>
-                </div>
-                <div class="detail-row">
-                    <span class="detail-label">Logs</span>
-                    <span class="detail-value">/var/log/remote/</span>
-                </div>
-                <div class="detail-row">
-                    <span class="detail-label">Retenção</span>
-                    <span class="detail-value">{{ syslog_retention }} dias</span>
-                </div>
-            </div>
-        </div>
-
-        <div class="service-card ntp">
-            <div class="service-icon">&#9200;</div>
-            <div class="service-name">NTP Local</div>
-            <div class="service-desc">Servidor de tempo para todos os dispositivos do site. Mantém sincronismo mesmo offline.</div>
-            <div class="service-details">
-                <div class="detail-row">
-                    <span class="detail-label">Serviço</span>
-                    <span class="detail-value">chronyd</span>
-                </div>
-                <div class="detail-row">
-                    <span class="detail-label">Porta</span>
-                    <span class="port-badge">UDP 123</span>
-                </div>
-                <div class="detail-row">
-                    <span class="detail-label">Upstream</span>
-                    <span class="detail-value">{{ ntp_upstream }}</span>
-                </div>
-                <div class="detail-row">
-                    <span class="detail-label">Rede servida</span>
-                    <span class="detail-value">{{ site_network }}</span>
-                </div>
-            </div>
-        </div>
-
-        <div class="service-card tftp">
-            <div class="service-icon">&#128190;</div>
-            <div class="service-name">TFTP</div>
-            <div class="service-desc">Servidor de arquivos para backup de configurações e distribuição de firmware dos switches.</div>
-            <div class="service-details">
-                <div class="detail-row">
-                    <span class="detail-label">Serviço</span>
-                    <span class="detail-value">tftp.socket</span>
-                </div>
-                <div class="detail-row">
-                    <span class="detail-label">Porta</span>
-                    <span class="port-badge">UDP 69</span>
-                </div>
-                <div class="detail-row">
-                    <span class="detail-label">Configs</span>
-                    <span class="detail-value">/var/lib/tftpboot/configs/</span>
-                </div>
-                <div class="detail-row">
-                    <span class="detail-label">Firmware</span>
-                    <span class="detail-value">/var/lib/tftpboot/firmware/</span>
-                </div>
-            </div>
-        </div>
-
-        <div class="service-card web">
-            <div class="service-icon">&#127760;</div>
-            <div class="service-name">Painel Web</div>
-            <div class="service-desc">Dashboard de status dos serviços de infraestrutura local do site edge.</div>
-            <div class="service-details">
-                <div class="detail-row">
-                    <span class="detail-label">Serviço</span>
-                    <span class="detail-value">nginx</span>
-                </div>
-                <div class="detail-row">
-                    <span class="detail-label">Porta</span>
-                    <span class="port-badge">TCP 80</span>
-                </div>
-                <div class="detail-row">
-                    <span class="detail-label">Root</span>
-                    <span class="detail-value">/usr/share/nginx/html/</span>
-                </div>
-            </div>
+        <h1><span>&#9881;</span> Infra Interna &mdash; <span>{{ site_name }}</span></h1>
+        <div class="header-right">
+            <span class="header-time" id="clock"></span>
+            <span class="site-badge">Site {{ site_id }}</span>
         </div>
     </div>
 
-    <div class="status-section">
-        <div class="status-card">
-            <h2>Topologia do Site Edge</h2>
-            <div class="topology">
-                <div class="topo-level">
-                    <div class="arch-node">
-                        <div class="label">WAN</div>
-                        <div class="name">&#127744; Internet</div>
-                        <div class="port">Link da loja</div>
+    <div class="content">
+        <!-- Topologia Interativa -->
+        <div class="topo-section">
+            <h2>&#127760; Topologia do Site &mdash; clique nos dispositivos para ver detalhes</h2>
+            <div class="topo">
+                <div class="topo-row">
+                    <div class="topo-node no-click"><span class="pulse"></span><div class="icon">&#127744;</div><div class="tname">WAN</div><div class="tip">Link Internet</div></div>
+                </div>
+                <div class="topo-pipe"></div>
+                <div class="topo-row">
+{% for sw in store_switches | default([]) %}
+                    <div class="topo-node" onclick="showSwitch('{{ loop.index0 }}')" id="topo-sw-{{ loop.index0 }}">
+                        <span class="pulse"></span>
+                        <div class="icon">&#128421;</div>
+                        <div class="tname">{{ sw.hostname | default('switch-' ~ loop.index) }}</div>
+                        <div class="tip">{{ sw.ip | default('N/A') }}</div>
+                    </div>
+{% endfor %}
+{% if store_switches | default([]) | length == 0 %}
+                    <div class="topo-node no-click"><span class="pulse"></span><div class="icon">&#128421;</div><div class="tname">Switches</div><div class="tip">Nenhum configurado</div></div>
+{% endif %}
+                </div>
+                <div class="topo-pipe"></div>
+                <div class="topo-row">
+{% if pdv_server_ip %}
+                    <div class="topo-node" onclick="showPDV()" id="topo-pdv">
+                        <span class="pulse"></span>
+                        <div class="icon">&#128722;</div>
+                        <div class="tname">PDV</div>
+                        <div class="tip">{{ pdv_server_ip }}</div>
+                    </div>
+{% endif %}
+                    <div class="topo-node" onclick="showInfra()" id="topo-infra">
+                        <span class="pulse"></span>
+                        <div class="icon">&#9881;</div>
+                        <div class="tname">Infra Interna</div>
+                        <div class="tip">{{ ansible_default_ipv4.address | default(ansible_host) }}</div>
                     </div>
                 </div>
-                <div class="topo-line"></div>
-                <div class="topo-level">
-                    <div class="arch-node">
-                        <div class="label">Rede</div>
-                        <div class="name">&#128421; Switch Cisco</div>
-                        <div class="port">VLANs + SNMP</div>
+            </div>
+        </div>
+
+        <div class="panels">
+            <!-- ==================== PAINEL SWITCHES ==================== -->
+            <div class="panel" id="panel-switches">
+                <h2>&#128421; Switches Cisco <span class="panel-close" onclick="closePanel('panel-switches')">&times;</span></h2>
+
+{% if store_switches | default([]) | length > 0 %}
+                <div class="switch-tabs">
+{% for sw in store_switches %}
+                    <div class="switch-tab {{ 'active' if loop.first }}" onclick="switchTab('{{ loop.index0 }}')">{{ sw.hostname | default('switch-' ~ loop.index) }}</div>
+{% endfor %}
+                </div>
+
+{% for sw in store_switches %}
+                <div class="switch-detail {{ 'visible' if loop.first }}" id="sw-detail-{{ loop.index0 }}">
+                    <div class="info-grid">
+                        <div class="info-card">
+                            <div class="label">Hostname</div>
+                            <div class="val">{{ sw.hostname | default('N/A') }}</div>
+                        </div>
+                        <div class="info-card">
+                            <div class="label">Endereço IP</div>
+                            <div class="val mono">{{ sw.ip | default('N/A') }}</div>
+                        </div>
+                        <div class="info-card">
+                            <div class="label">Modelo</div>
+                            <div class="val">{{ sw.model | default('Cisco IOS') }}</div>
+                        </div>
+                        <div class="info-card">
+                            <div class="label">Serial</div>
+                            <div class="val mono">{{ sw.serial | default('N/A') }}</div>
+                        </div>
+                    </div>
+
+                    <h3 style="font-size: 0.85rem; color: var(--cyan); margin: 1rem 0 0.5rem;">Checklist de Configuração</h3>
+                    <div class="checklist">
+                        <div class="check-item">
+                            <div class="check-icon ok">&#10003;</div>
+                            <span class="check-label">Conectividade</span>
+                            <span class="check-val">Online</span>
+                        </div>
+                        <div class="check-item">
+                            <div class="check-icon {{ 'ok' if sw.snmp_configured | default(true) else 'fail' }}">{{ '&#10003;' if sw.snmp_configured | default(true) else '&#10007;' }}</div>
+                            <span class="check-label">SNMP Configurado</span>
+                            <span class="check-val">{{ 'community string ativa' if sw.snmp_configured | default(true) else 'Não configurado' }}</span>
+                        </div>
+                        <div class="check-item">
+                            <div class="check-icon {{ 'ok' if sw.ntp_configured | default(true) else 'warn' }}">{{ '&#10003;' if sw.ntp_configured | default(true) else '!' }}</div>
+                            <span class="check-label">NTP Sincronizado</span>
+                            <span class="check-val">{{ ntp_upstream }}</span>
+                        </div>
+                        <div class="check-item">
+                            <div class="check-icon {{ 'ok' if sw.dns_configured | default(true) else 'warn' }}">{{ '&#10003;' if sw.dns_configured | default(true) else '!' }}</div>
+                            <span class="check-label">DNS Configurado</span>
+                            <span class="check-val">{{ 'Resolvendo' if sw.dns_configured | default(true) else 'Verificar' }}</span>
+                        </div>
+                        <div class="check-item">
+                            <div class="check-icon {{ 'ok' if sw.banner_configured | default(true) else 'warn' }}">{{ '&#10003;' if sw.banner_configured | default(true) else '!' }}</div>
+                            <span class="check-label">Banner de Login</span>
+                            <span class="check-val">{{ 'Configurado' if sw.banner_configured | default(true) else 'Ausente' }}</span>
+                        </div>
+                        <div class="check-item">
+                            <div class="check-icon {{ 'ok' if sw.vlans_configured | default(true) else 'warn' }}">{{ '&#10003;' if sw.vlans_configured | default(true) else '!' }}</div>
+                            <span class="check-label">VLANs</span>
+                            <span class="check-val">{{ 'Configuradas' if sw.vlans_configured | default(true) else 'Verificar' }}</span>
+                        </div>
+                        <div class="check-item">
+                            <div class="check-icon info">&#8594;</div>
+                            <span class="check-label">Syslog</span>
+                            <span class="check-val">{{ ansible_default_ipv4.address | default(ansible_host) }}:514</span>
+                        </div>
+                        <div class="check-item">
+                            <div class="check-icon info">&#8594;</div>
+                            <span class="check-label">TFTP Backup</span>
+                            <span class="check-val">{{ ansible_default_ipv4.address | default(ansible_host) }}:69</span>
+                        </div>
                     </div>
                 </div>
-                <div class="topo-line"></div>
-                <div class="topo-level">
-                    <div class="arch-node" style="border-color: #3b82f6;">
-                        <div class="label">Servidor</div>
-                        <div class="name">&#9881; Infra Interna</div>
-                        <div class="port">Syslog / NTP / TFTP</div>
+{% endfor %}
+{% else %}
+                <p style="color: var(--text2); padding: 1rem;">Nenhum switch configurado. Passe a variável <code>store_switches</code> com a lista de switches.</p>
+{% endif %}
+            </div>
+
+            <!-- ==================== PAINEL PDV ==================== -->
+            <div class="panel" id="panel-pdv">
+                <h2>&#128722; Servidor PDV <span class="panel-close" onclick="closePanel('panel-pdv')">&times;</span></h2>
+
+{% if pdv_server_ip %}
+                <div class="info-grid" id="pdv-info">
+                    <div class="info-card">
+                        <div class="label">Endereço IP</div>
+                        <div class="val mono">{{ pdv_server_ip }}</div>
                     </div>
-                    <div class="arch-node">
-                        <div class="label">Servidor</div>
-                        <div class="name">&#128722; PDV / POS</div>
-                        <div class="port">App 3 camadas</div>
+                    <div class="info-card">
+                        <div class="label">Status</div>
+                        <div class="val" id="pdv-status" style="color: var(--yellow);">Verificando...</div>
+                    </div>
+                    <div class="info-card">
+                        <div class="label">Store</div>
+                        <div class="val" id="pdv-store">--</div>
+                    </div>
+                    <div class="info-card">
+                        <div class="label">Store ID</div>
+                        <div class="val mono" id="pdv-storeid">--</div>
                     </div>
                 </div>
-                <div class="topo-line"></div>
-                <div class="topo-level">
-                    <div class="arch-node">
-                        <div class="label">Endpoints</div>
-                        <div class="name">&#128424; Terminais</div>
-                        <div class="port">Caixas / Balanças</div>
+
+                <h3 style="font-size: 0.85rem; color: var(--cyan); margin: 1rem 0 0.5rem;">KPIs da Loja (ao vivo)</h3>
+                <div class="pdv-kpi" id="pdv-kpis">
+                    <div class="kpi"><div class="kval" id="kpi-vendas">--</div><div class="klabel">Vendas</div></div>
+                    <div class="kpi"><div class="kval green" id="kpi-faturamento">--</div><div class="klabel">Faturamento</div></div>
+                    <div class="kpi"><div class="kval" id="kpi-produtos">--</div><div class="klabel">Produtos</div></div>
+                    <div class="kpi"><div class="kval" id="kpi-estoque">--</div><div class="klabel">Itens em Estoque</div></div>
+                </div>
+
+                <h3 style="font-size: 0.85rem; color: var(--cyan); margin: 1rem 0 0.5rem;">Checklist Serviços (App 3 Camadas)</h3>
+                <div class="svc-grid">
+                    <div class="svc-card">
+                        <div class="svc-icon">&#127760;</div>
+                        <div><div class="svc-name">Nginx</div><div class="svc-port">Frontend :80</div></div>
+                        <div class="svc-status" id="svc-nginx">...</div>
                     </div>
-                    <div class="arch-node">
-                        <div class="label">Endpoints</div>
-                        <div class="name">&#128424; Backoffice</div>
-                        <div class="port">Estações admin</div>
+                    <div class="svc-card">
+                        <div class="svc-icon">&#9881;</div>
+                        <div><div class="svc-name">Flask API</div><div class="svc-port">Backend :5000</div></div>
+                        <div class="svc-status" id="svc-api">...</div>
+                    </div>
+                    <div class="svc-card">
+                        <div class="svc-icon">&#128451;</div>
+                        <div><div class="svc-name">MariaDB</div><div class="svc-port">Database :3306</div></div>
+                        <div class="svc-status" id="svc-db">...</div>
+                    </div>
+                </div>
+
+                <h3 style="font-size: 0.85rem; color: var(--cyan); margin: 1rem 0 0.5rem;">Produtos em Estoque</h3>
+                <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+                    <thead><tr>
+                        <th style="text-align: left; color: var(--muted); font-size: 0.72rem; padding: 0.5rem; text-transform: uppercase;">Produto</th>
+                        <th style="text-align: left; color: var(--muted); font-size: 0.72rem; padding: 0.5rem; text-transform: uppercase;">Preço</th>
+                        <th style="text-align: left; color: var(--muted); font-size: 0.72rem; padding: 0.5rem; text-transform: uppercase;">Estoque</th>
+                    </tr></thead>
+                    <tbody id="pdv-produtos"></tbody>
+                </table>
+
+                <div style="margin-top: 1rem; padding-top: 0.8rem; border-top: 1px solid var(--border);">
+                    <a href="http://{{ pdv_server_ip }}/" target="_blank" style="background: var(--blue-bg); color: var(--blue); padding: 6px 14px; border-radius: 8px; font-size: 0.82rem; text-decoration: none; margin-right: 0.5rem;">&#128279; Abrir App POS</a>
+                    <a href="http://{{ pdv_server_ip }}/api/health" target="_blank" style="background: var(--green-bg); color: var(--green); padding: 6px 14px; border-radius: 8px; font-size: 0.82rem; text-decoration: none;">&#128147; Health Check</a>
+                </div>
+{% else %}
+                <p style="color: var(--text2); padding: 1rem;">Nenhum servidor PDV configurado. Passe a variável <code>pdv_server_ip</code>.</p>
+{% endif %}
+            </div>
+
+            <!-- ==================== PAINEL INFRA ==================== -->
+            <div class="panel" id="panel-infra">
+                <h2>&#9881; Servidor Infra-Interna <span class="panel-close" onclick="closePanel('panel-infra')">&times;</span></h2>
+
+                <div class="info-grid">
+                    <div class="info-card">
+                        <div class="label">Hostname</div>
+                        <div class="val">{{ ansible_hostname }}</div>
+                    </div>
+                    <div class="info-card">
+                        <div class="label">Endereço IP</div>
+                        <div class="val mono">{{ ansible_default_ipv4.address | default(ansible_host) }}</div>
+                    </div>
+                    <div class="info-card">
+                        <div class="label">Sistema Operacional</div>
+                        <div class="val">{{ ansible_distribution }} {{ ansible_distribution_version }}</div>
+                    </div>
+                    <div class="info-card">
+                        <div class="label">Kernel</div>
+                        <div class="val mono">{{ ansible_kernel }}</div>
+                    </div>
+                    <div class="info-card">
+                        <div class="label">CPUs</div>
+                        <div class="val">{{ ansible_processor_vcpus }} vCPUs</div>
+                    </div>
+                    <div class="info-card">
+                        <div class="label">Memória Total</div>
+                        <div class="val">{{ ansible_memtotal_mb }} MB</div>
+                    </div>
+                    <div class="info-card">
+                        <div class="label">Uptime</div>
+                        <div class="val">{{ ansible_uptime_seconds | default(0) | int // 86400 }} dias</div>
+                    </div>
+                    <div class="info-card">
+                        <div class="label">Rede do Site</div>
+                        <div class="val mono">{{ site_network }}</div>
+                    </div>
+                </div>
+
+                <h3 style="font-size: 0.85rem; color: var(--cyan); margin: 1rem 0 0.5rem;">Serviços Ativos</h3>
+                <div class="svc-grid">
+                    <div class="svc-card">
+                        <div class="svc-icon">&#128220;</div>
+                        <div><div class="svc-name">Rsyslog</div><div class="svc-port">Syslog :514</div></div>
+                        <div class="svc-status up">ATIVO</div>
+                    </div>
+                    <div class="svc-card">
+                        <div class="svc-icon">&#9200;</div>
+                        <div><div class="svc-name">Chrony</div><div class="svc-port">NTP :123</div></div>
+                        <div class="svc-status up">ATIVO</div>
+                    </div>
+                    <div class="svc-card">
+                        <div class="svc-icon">&#128190;</div>
+                        <div><div class="svc-name">TFTP</div><div class="svc-port">TFTP :69</div></div>
+                        <div class="svc-status up">ATIVO</div>
+                    </div>
+                    <div class="svc-card">
+                        <div class="svc-icon">&#127760;</div>
+                        <div><div class="svc-name">Nginx</div><div class="svc-port">Painel :80</div></div>
+                        <div class="svc-status up">ATIVO</div>
+                    </div>
+                </div>
+
+                <h3 style="font-size: 0.85rem; color: var(--cyan); margin: 1rem 0 0.5rem;">Checklist Infra</h3>
+                <div class="checklist">
+                    <div class="check-item">
+                        <div class="check-icon ok">&#10003;</div>
+                        <span class="check-label">Syslog recebendo logs remotos</span>
+                        <span class="check-val">/var/log/remote/</span>
+                    </div>
+                    <div class="check-item">
+                        <div class="check-icon ok">&#10003;</div>
+                        <span class="check-label">NTP upstream sincronizado</span>
+                        <span class="check-val">{{ ntp_upstream }}</span>
+                    </div>
+                    <div class="check-item">
+                        <div class="check-icon ok">&#10003;</div>
+                        <span class="check-label">NTP servindo rede local</span>
+                        <span class="check-val">allow {{ site_network }}</span>
+                    </div>
+                    <div class="check-item">
+                        <div class="check-icon ok">&#10003;</div>
+                        <span class="check-label">TFTP diretório de configs</span>
+                        <span class="check-val">/var/lib/tftpboot/configs/</span>
+                    </div>
+                    <div class="check-item">
+                        <div class="check-icon ok">&#10003;</div>
+                        <span class="check-label">TFTP diretório de firmware</span>
+                        <span class="check-val">/var/lib/tftpboot/firmware/</span>
+                    </div>
+                    <div class="check-item">
+                        <div class="check-icon ok">&#10003;</div>
+                        <span class="check-label">Retenção de logs</span>
+                        <span class="check-val">{{ syslog_retention }} dias</span>
                     </div>
                 </div>
             </div>
@@ -254,7 +407,113 @@
     </div>
 
     <div class="footer">
-        Infra Interna Edge &mdash; <span>{{ site_name }}</span> ({{ site_id }}) &mdash; Deployed by Ansible Automation Platform
+        Infra Interna Edge &mdash; {{ site_name }} ({{ site_id }}) &mdash; Deployed by Ansible Automation Platform
     </div>
+
+    <script>
+        const PDV_IP = '{{ pdv_server_ip }}';
+
+        // Clock
+        function updateClock() {
+            const now = new Date();
+            document.getElementById('clock').textContent = now.toLocaleString('pt-BR');
+        }
+        updateClock(); setInterval(updateClock, 1000);
+
+        // Panel management
+        function clearActive() {
+            document.querySelectorAll('.topo-node').forEach(n => n.classList.remove('active'));
+        }
+
+        function showSwitch(idx) {
+            clearActive();
+            document.getElementById('topo-sw-' + idx).classList.add('active');
+            document.querySelectorAll('.panel').forEach(p => p.classList.remove('visible'));
+            document.getElementById('panel-switches').classList.add('visible');
+            switchTab(idx);
+        }
+
+        function showPDV() {
+            clearActive();
+            document.getElementById('topo-pdv').classList.add('active');
+            document.querySelectorAll('.panel').forEach(p => p.classList.remove('visible'));
+            document.getElementById('panel-pdv').classList.add('visible');
+            loadPDVData();
+        }
+
+        function showInfra() {
+            clearActive();
+            document.getElementById('topo-infra').classList.add('active');
+            document.querySelectorAll('.panel').forEach(p => p.classList.remove('visible'));
+            document.getElementById('panel-infra').classList.add('visible');
+        }
+
+        function closePanel(id) {
+            clearActive();
+            document.getElementById(id).classList.remove('visible');
+        }
+
+        // Switch tabs
+        function switchTab(idx) {
+            document.querySelectorAll('.switch-tab').forEach((t, i) => t.classList.toggle('active', i == idx));
+            document.querySelectorAll('.switch-detail').forEach((d, i) => d.classList.toggle('visible', i == idx));
+            clearActive();
+            const node = document.getElementById('topo-sw-' + idx);
+            if (node) node.classList.add('active');
+        }
+
+        // PDV live data
+        async function loadPDVData() {
+            if (!PDV_IP) return;
+            try {
+                const healthRes = await fetch(`http://${PDV_IP}/api/health`);
+                const health = await healthRes.json();
+                document.getElementById('pdv-status').textContent = health.status === 'ok' ? 'Online' : 'Erro';
+                document.getElementById('pdv-status').style.color = health.status === 'ok' ? 'var(--green)' : 'var(--red)';
+                document.getElementById('pdv-store').textContent = health.store || '--';
+                document.getElementById('pdv-storeid').textContent = health.store_id || '--';
+
+                document.getElementById('svc-nginx').textContent = 'ATIVO';
+                document.getElementById('svc-nginx').className = 'svc-status up';
+                document.getElementById('svc-api').textContent = 'ATIVO';
+                document.getElementById('svc-api').className = 'svc-status up';
+                document.getElementById('svc-db').textContent = 'ATIVO';
+                document.getElementById('svc-db').className = 'svc-status up';
+            } catch (e) {
+                document.getElementById('pdv-status').textContent = 'Offline';
+                document.getElementById('pdv-status').style.color = 'var(--red)';
+                document.getElementById('svc-nginx').textContent = 'DOWN'; document.getElementById('svc-nginx').className = 'svc-status down';
+                document.getElementById('svc-api').textContent = 'DOWN'; document.getElementById('svc-api').className = 'svc-status down';
+                document.getElementById('svc-db').textContent = 'N/A'; document.getElementById('svc-db').className = 'svc-status down';
+            }
+
+            try {
+                const dashRes = await fetch(`http://${PDV_IP}/api/dashboard`);
+                const dash = await dashRes.json();
+                document.getElementById('kpi-vendas').textContent = dash.vendas;
+                document.getElementById('kpi-faturamento').textContent = 'R$ ' + dash.faturamento.toFixed(2);
+                document.getElementById('kpi-produtos').textContent = dash.total_produtos;
+                document.getElementById('kpi-estoque').textContent = dash.itens_estoque;
+            } catch (e) {}
+
+            try {
+                const prodRes = await fetch(`http://${PDV_IP}/api/produtos`);
+                const produtos = await prodRes.json();
+                const tbody = document.getElementById('pdv-produtos');
+                tbody.innerHTML = produtos.map(p => {
+                    let color = 'var(--green)';
+                    if (p.estoque < 5) color = 'var(--red)';
+                    else if (p.estoque < 20) color = 'var(--yellow)';
+                    return `<tr style="border-bottom: 1px solid var(--border);">
+                        <td style="padding: 0.5rem;">${p.nome}</td>
+                        <td style="padding: 0.5rem;">R$ ${parseFloat(p.preco).toFixed(2)}</td>
+                        <td style="padding: 0.5rem; color: ${color}; font-weight: 600;">${p.estoque} un</td>
+                    </tr>`;
+                }).join('');
+            } catch (e) {
+                document.getElementById('pdv-produtos').innerHTML = '<tr><td colspan="3" style="padding: 0.5rem; color: var(--red);">Erro ao carregar produtos</td></tr>';
+            }
+        }
+    </script>
 </body>
 </html>

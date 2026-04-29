@@ -5,15 +5,23 @@
 #   - Rsyslog (concentrador de logs do site)
 #   - Chrony (servidor NTP local)
 #   - TFTP (backup de configs de switches)
-#   - Nginx (painel web de status do site)
+#   - Nginx (painel web interativo do site)
 #
 # Variáveis para Survey do AAP:
-#   target_hosts     - Grupo alvo: linux (todos), loja1, loja2, etc.
-#   site_name       - Nome do site (ex: "Loja Centro SP 042")
-#   site_id         - ID do site (ex: "042")
+#   target_hosts     - Grupo alvo: infra_interna (todos), loja1, loja2, etc.
+#   site_name        - Nome do site (ex: "Loja Centro SP 042")
+#   site_id          - ID do site (ex: "042")
 #   ntp_upstream     - Servidor NTP upstream (default: "a.ntp.br")
 #   syslog_retention - Dias de retenção de logs (default: "30")
 #   site_network     - Rede local do site (default: "192.168.100.0/24")
+#   pdv_server_ip    - IP do servidor PDV da loja
+#   store_switches   - Lista de switches em YAML:
+#     - hostname: rtr1-loja1
+#       ip: 10.100.1.101
+#       model: Cisco IOSv
+#     - hostname: rtr2-loja1
+#       ip: 10.100.1.102
+#       model: Cisco IOSv
 
 - name: Deploy servidor Infra-Interna - Edge
   hosts: "{{ target_hosts | default('infra_interna') }}:&infra_interna"
@@ -26,6 +34,8 @@
     ntp_upstream: "{{ ntp_upstream | default('a.ntp.br') }}"
     syslog_retention: "{{ syslog_retention | default('30') }}"
     site_network: "{{ site_network | default('192.168.100.0/24') }}"
+    pdv_server_ip: "{{ pdv_server_ip | default('') }}"
+    store_switches: "{{ store_switches | default([]) }}"
     tftp_dir: "/var/lib/tftpboot"
     web_dir: "/usr/share/nginx/html"
 
@@ -109,12 +119,51 @@
         name: nginx
         state: present
 
-    - name: Deploy do painel web de status
+    - name: Converter store_switches se recebido como string
+      ansible.builtin.set_fact:
+        store_switches: "{{ store_switches | from_yaml }}"
+      when: store_switches is string
+
+    - name: Deploy do painel web interativo
       ansible.builtin.template:
         src: templates/infra_dashboard.html.j2
         dest: "{{ web_dir }}/index.html"
         mode: "0644"
       notify: Reiniciar nginx
+
+    - name: Deploy da configuração Nginx
+      ansible.builtin.template:
+        src: templates/pos_nginx_main.conf.j2
+        dest: /etc/nginx/nginx.conf
+        mode: "0644"
+      notify: Reiniciar nginx
+
+    - name: Remover configuração default do Nginx
+      ansible.builtin.file:
+        path: /etc/nginx/conf.d/default.conf
+        state: absent
+      notify: Reiniciar nginx
+
+    - name: Deploy do virtual host Nginx
+      ansible.builtin.copy:
+        dest: /etc/nginx/conf.d/infra-dashboard.conf
+        content: |
+          server {
+              listen 80;
+              server_name _;
+              root /usr/share/nginx/html;
+              index index.html;
+              location / {
+                  try_files $uri $uri/ /index.html;
+              }
+          }
+        mode: "0644"
+      notify: Reiniciar nginx
+
+    - name: Permitir Nginx conectar em serviços de rede (SELinux)
+      ansible.builtin.command:
+        cmd: setsebool -P httpd_can_network_connect 1
+      changed_when: false
 
     - name: Habilitar e iniciar nginx
       ansible.builtin.systemd:
