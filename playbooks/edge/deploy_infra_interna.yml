@@ -122,25 +122,6 @@
         state: started
         enabled: true
 
-    # --- Firewall ---
-
-    - name: Liberar serviços no firewall
-      ansible.builtin.command:
-        cmd: "firewall-cmd --permanent --add-service={{ item }}"
-      loop:
-        - http
-        - syslog
-        - ntp
-        - tftp
-      register: fw_result
-      changed_when: "'ALREADY_ENABLED' not in fw_result.stderr"
-      failed_when: fw_result.rc != 0 and 'ALREADY_ENABLED' not in fw_result.stderr
-
-    - name: Recarregar firewall
-      ansible.builtin.command:
-        cmd: firewall-cmd --reload
-      changed_when: true
-
     # --- Validação ---
 
     - name: Verificar status dos serviços
