@@ -1,0 +1,168 @@
+---
+# Playbook: Deploy servidor Infra-Interna (Edge/Lojas/PDV)
+#
+# Serviços:
+#   - Rsyslog (concentrador de logs do site)
+#   - Chrony (servidor NTP local)
+#   - TFTP (backup de configs de switches)
+#   - Nginx (painel web de status do site)
+#
+# Variáveis para Survey do AAP:
+#   site_name       - Nome do site (ex: "Loja Centro SP 042")
+#   site_id         - ID do site (ex: "042")
+#   ntp_upstream     - Servidor NTP upstream (default: "a.ntp.br")
+#   syslog_retention - Dias de retenção de logs (default: "30")
+#   site_network     - Rede local do site (default: "192.168.100.0/24")
+
+- name: Deploy servidor Infra-Interna - Edge
+  hosts: "{{ target_hosts | default('edge_infra') }}"
+  gather_facts: true
+
+  vars:
+    site_name: "{{ site_name | default('Loja Demo') }}"
+    site_id: "{{ site_id | default('001') }}"
+    ntp_upstream: "{{ ntp_upstream | default('a.ntp.br') }}"
+    syslog_retention: "{{ syslog_retention | default('30') }}"
+    site_network: "{{ site_network | default('192.168.100.0/24') }}"
+    tftp_dir: "/var/lib/tftpboot"
+    web_dir: "/usr/share/nginx/html"
+
+  tasks:
+    # --- Syslog (Rsyslog) ---
+
+    - name: Instalar rsyslog
+      ansible.builtin.dnf:
+        name: rsyslog
+        state: present
+
+    - name: Configurar rsyslog para receber logs remotos
+      ansible.builtin.template:
+        src: templates/infra_rsyslog.conf.j2
+        dest: /etc/rsyslog.d/10-edge-remote.conf
+        mode: "0644"
+      notify: Reiniciar rsyslog
+
+    - name: Criar diretório de logs remotos
+      ansible.builtin.file:
+        path: /var/log/remote
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Habilitar e iniciar rsyslog
+      ansible.builtin.systemd:
+        name: rsyslog
+        state: started
+        enabled: true
+
+    # --- NTP Local (Chrony) ---
+
+    - name: Instalar chrony
+      ansible.builtin.dnf:
+        name: chrony
+        state: present
+
+    - name: Configurar chrony como servidor NTP local
+      ansible.builtin.template:
+        src: templates/infra_chrony.conf.j2
+        dest: /etc/chrony.conf
+        mode: "0644"
+      notify: Reiniciar chrony
+
+    - name: Habilitar e iniciar chrony
+      ansible.builtin.systemd:
+        name: chronyd
+        state: started
+        enabled: true
+
+    # --- TFTP ---
+
+    - name: Instalar servidor TFTP
+      ansible.builtin.dnf:
+        name: tftp-server
+        state: present
+
+    - name: Criar diretórios TFTP para backups
+      ansible.builtin.file:
+        path: "{{ tftp_dir }}/{{ item }}"
+        state: directory
+        owner: nobody
+        group: nobody
+        mode: "0777"
+      loop:
+        - configs
+        - firmware
+
+    - name: Habilitar e iniciar TFTP
+      ansible.builtin.systemd:
+        name: tftp.socket
+        state: started
+        enabled: true
+
+    # --- Painel Web (Nginx) ---
+
+    - name: Instalar nginx
+      ansible.builtin.dnf:
+        name: nginx
+        state: present
+
+    - name: Deploy do painel web de status
+      ansible.builtin.template:
+        src: templates/infra_dashboard.html.j2
+        dest: "{{ web_dir }}/index.html"
+        mode: "0644"
+      notify: Reiniciar nginx
+
+    - name: Habilitar e iniciar nginx
+      ansible.builtin.systemd:
+        name: nginx
+        state: started
+        enabled: true
+
+    # --- Firewall ---
+
+    - name: Liberar serviços no firewall
+      ansible.posix.firewalld:
+        service: "{{ item }}"
+        permanent: true
+        immediate: true
+        state: enabled
+      loop:
+        - http
+        - syslog
+        - ntp
+        - tftp
+
+    # --- Validação ---
+
+    - name: Verificar status dos serviços
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+      register: services_status
+      loop:
+        - rsyslog
+        - chronyd
+        - tftp.socket
+        - nginx
+
+    - name: Exibir status dos serviços
+      ansible.builtin.debug:
+        msg: "{{ item.item }}: {{ item.status.ActiveState }}"
+      loop: "{{ services_status.results }}"
+
+  handlers:
+    - name: Reiniciar rsyslog
+      ansible.builtin.systemd:
+        name: rsyslog
+        state: restarted
+
+    - name: Reiniciar chrony
+      ansible.builtin.systemd:
+        name: chronyd
+        state: restarted
+
+    - name: Reiniciar nginx
+      ansible.builtin.systemd:
+        name: nginx
+        state: restarted

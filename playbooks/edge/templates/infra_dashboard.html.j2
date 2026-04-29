@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Infra Interna - {{ site_name }}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; background: #0a0e1a; color: #c9d1d9; min-height: 100vh; }
+
+        .header {
+            background: linear-gradient(135deg, #111827 0%, #0a0e1a 100%);
+            border-bottom: 2px solid #2563eb;
+            padding: 1.2rem 2rem;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .header h1 { font-size: 1.3rem; color: #f0f6fc; }
+        .header h1 span { color: #3b82f6; }
+        .header .site-badge {
+            background: #1e3a5f; color: #58a6ff; padding: 4px 14px;
+            border-radius: 20px; font-size: 0.8rem; font-weight: 600;
+        }
+
+        .services-grid {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.2rem; padding: 1.5rem 2rem;
+        }
+
+        .service-card {
+            background: #111827; border-radius: 14px; padding: 1.5rem;
+            border: 1px solid #1e293b; position: relative; overflow: hidden;
+            transition: border-color 0.3s, transform 0.2s;
+        }
+        .service-card:hover { border-color: #3b82f6; transform: translateY(-2px); }
+        .service-card::before {
+            content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+        }
+        .service-card.syslog::before { background: linear-gradient(90deg, #f59e0b, #ef4444); }
+        .service-card.ntp::before { background: linear-gradient(90deg, #3b82f6, #06b6d4); }
+        .service-card.tftp::before { background: linear-gradient(90deg, #10b981, #34d399); }
+        .service-card.web::before { background: linear-gradient(90deg, #8b5cf6, #a78bfa); }
+
+        .service-icon { font-size: 2rem; margin-bottom: 0.8rem; }
+        .service-name { font-size: 1.1rem; font-weight: 700; color: #f0f6fc; margin-bottom: 0.3rem; }
+        .service-desc { font-size: 0.82rem; color: #6b7280; margin-bottom: 1rem; line-height: 1.4; }
+
+        .service-details { display: flex; flex-direction: column; gap: 0.4rem; }
+        .detail-row {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 0.3rem 0; border-top: 1px solid #1e293b; font-size: 0.82rem;
+        }
+        .detail-label { color: #6b7280; }
+        .detail-value { color: #c9d1d9; font-family: 'Courier New', monospace; font-size: 0.8rem; }
+        .port-badge {
+            background: #1e3a5f; color: #58a6ff; padding: 2px 10px;
+            border-radius: 10px; font-size: 0.75rem; font-weight: 600;
+        }
+
+        .status-section {
+            padding: 0 2rem 1.5rem;
+        }
+        .status-card {
+            background: #111827; border-radius: 14px; padding: 1.5rem;
+            border: 1px solid #1e293b;
+        }
+        .status-card h2 {
+            font-size: 0.95rem; color: #3b82f6; margin-bottom: 1rem;
+            padding-bottom: 0.5rem; border-bottom: 1px solid #1e293b;
+        }
+
+        .arch-row {
+            display: flex; align-items: center; justify-content: center;
+            gap: 0.8rem; padding: 1.2rem 0; flex-wrap: wrap;
+        }
+        .arch-node {
+            background: #0a0e1a; border: 2px solid #1e293b; border-radius: 12px;
+            padding: 1rem 1.3rem; text-align: center; min-width: 130px;
+            transition: border-color 0.3s;
+        }
+        .arch-node:hover { border-color: #3b82f6; }
+        .arch-node .label { font-size: 0.65rem; color: #4b5563; text-transform: uppercase; letter-spacing: 1px; }
+        .arch-node .name { font-size: 0.95rem; font-weight: 700; color: #f0f6fc; margin-top: 4px; }
+        .arch-node .port { font-size: 0.7rem; color: #6b7280; margin-top: 2px; }
+        .arch-connector { color: #3b82f6; font-size: 1rem; }
+
+        .topology {
+            display: flex; flex-direction: column; align-items: center; gap: 0.5rem;
+            padding: 1rem 0;
+        }
+        .topo-level {
+            display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap;
+        }
+        .topo-line { width: 2px; height: 20px; background: #1e293b; }
+
+        .footer {
+            text-align: center; padding: 1.2rem; color: #374151;
+            font-size: 0.75rem; border-top: 1px solid #111827;
+        }
+        .footer span { color: #3b82f6; }
+
+        @media (max-width: 640px) {
+            .services-grid { grid-template-columns: 1fr; }
+            .header { flex-direction: column; gap: 0.5rem; text-align: center; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1><span>&#9881;</span> Infra Interna &mdash; {{ site_name }}</h1>
+        <div class="site-badge">Site {{ site_id }}</div>
+    </div>
+
+    <div class="services-grid">
+        <div class="service-card syslog">
+            <div class="service-icon">&#128220;</div>
+            <div class="service-name">Syslog</div>
+            <div class="service-desc">Concentrador de logs do site. Recebe logs de switches, routers, PDV e servidores via UDP/TCP.</div>
+            <div class="service-details">
+                <div class="detail-row">
+                    <span class="detail-label">Serviço</span>
+                    <span class="detail-value">rsyslog</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Porta</span>
+                    <span class="port-badge">UDP/TCP 514</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Logs</span>
+                    <span class="detail-value">/var/log/remote/</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Retenção</span>
+                    <span class="detail-value">{{ syslog_retention }} dias</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="service-card ntp">
+            <div class="service-icon">&#9200;</div>
+            <div class="service-name">NTP Local</div>
+            <div class="service-desc">Servidor de tempo para todos os dispositivos do site. Mantém sincronismo mesmo offline.</div>
+            <div class="service-details">
+                <div class="detail-row">
+                    <span class="detail-label">Serviço</span>
+                    <span class="detail-value">chronyd</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Porta</span>
+                    <span class="port-badge">UDP 123</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Upstream</span>
+                    <span class="detail-value">{{ ntp_upstream }}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Rede servida</span>
+                    <span class="detail-value">{{ site_network }}</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="service-card tftp">
+            <div class="service-icon">&#128190;</div>
+            <div class="service-name">TFTP</div>
+            <div class="service-desc">Servidor de arquivos para backup de configurações e distribuição de firmware dos switches.</div>
+            <div class="service-details">
+                <div class="detail-row">
+                    <span class="detail-label">Serviço</span>
+                    <span class="detail-value">tftp.socket</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Porta</span>
+                    <span class="port-badge">UDP 69</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Configs</span>
+                    <span class="detail-value">/var/lib/tftpboot/configs/</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Firmware</span>
+                    <span class="detail-value">/var/lib/tftpboot/firmware/</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="service-card web">
+            <div class="service-icon">&#127760;</div>
+            <div class="service-name">Painel Web</div>
+            <div class="service-desc">Dashboard de status dos serviços de infraestrutura local do site edge.</div>
+            <div class="service-details">
+                <div class="detail-row">
+                    <span class="detail-label">Serviço</span>
+                    <span class="detail-value">nginx</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Porta</span>
+                    <span class="port-badge">TCP 80</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Root</span>
+                    <span class="detail-value">/usr/share/nginx/html/</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="status-section">
+        <div class="status-card">
+            <h2>Topologia do Site Edge</h2>
+            <div class="topology">
+                <div class="topo-level">
+                    <div class="arch-node">
+                        <div class="label">WAN</div>
+                        <div class="name">&#127744; Internet</div>
+                        <div class="port">Link da loja</div>
+                    </div>
+                </div>
+                <div class="topo-line"></div>
+                <div class="topo-level">
+                    <div class="arch-node">
+                        <div class="label">Rede</div>
+                        <div class="name">&#128421; Switch Cisco</div>
+                        <div class="port">VLANs + SNMP</div>
+                    </div>
+                </div>
+                <div class="topo-line"></div>
+                <div class="topo-level">
+                    <div class="arch-node" style="border-color: #3b82f6;">
+                        <div class="label">Servidor</div>
+                        <div class="name">&#9881; Infra Interna</div>
+                        <div class="port">Syslog / NTP / TFTP</div>
+                    </div>
+                    <div class="arch-node">
+                        <div class="label">Servidor</div>
+                        <div class="name">&#128722; PDV / POS</div>
+                        <div class="port">App 3 camadas</div>
+                    </div>
+                </div>
+                <div class="topo-line"></div>
+                <div class="topo-level">
+                    <div class="arch-node">
+                        <div class="label">Endpoints</div>
+                        <div class="name">&#128424; Terminais</div>
+                        <div class="port">Caixas / Balanças</div>
+                    </div>
+                    <div class="arch-node">
+                        <div class="label">Endpoints</div>
+                        <div class="name">&#128424; Backoffice</div>
+                        <div class="port">Estações admin</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer">
+        Infra Interna Edge &mdash; <span>{{ site_name }}</span> ({{ site_id }}) &mdash; Deployed by Ansible Automation Platform
+    </div>
+</body>
+</html>

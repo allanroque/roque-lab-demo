@@ -1,0 +1,18 @@
+# Chrony - Servidor NTP Local Edge
+# Site: {{ site_name }} ({{ site_id }})
+
+# Servidor upstream
+server {{ ntp_upstream }} iburst
+server b.ntp.br iburst
+
+# Servir NTP para rede local do site
+allow {{ site_network }}
+
+# Manter tempo mesmo offline (stratum 10 local)
+local stratum 10
+
+# Arquivo de drift
+driftfile /var/lib/chrony/drift
+
+# Log
+logdir /var/log/chrony

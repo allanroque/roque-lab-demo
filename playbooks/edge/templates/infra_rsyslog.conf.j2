@@ -1,0 +1,21 @@
+# Rsyslog - Concentrador de logs Edge
+# Site: {{ site_name }} ({{ site_id }})
+
+# Receber logs via UDP
+module(load="imudp")
+input(type="imudp" port="514")
+
+# Receber logs via TCP
+module(load="imtcp")
+input(type="imtcp" port="514")
+
+# Organizar logs por hostname de origem
+template(name="RemoteLogs" type="string"
+    string="/var/log/remote/%HOSTNAME%/%PROGRAMNAME%.log")
+
+if $fromhost-ip != '127.0.0.1' then {
+    action(type="omfile" dynaFile="RemoteLogs")
+    stop
+}
+
+# Rotação automática após {{ syslog_retention }} dias via logrotate
