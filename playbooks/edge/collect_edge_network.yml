@@ -4,6 +4,10 @@
 # Coleta status real de SNMP, NTP, DNS, Banner, VLANs e salva
 # como JSON no servidor infra-interna para o dashboard.
 #
+# Credential do JT: Machine (SSH Linux) para acessar o infra-interna
+# Acesso aos switches via variáveis de grupo no inventário ou extra vars:
+#   ansible_user / ansible_password no grupo cisco
+#
 # Variáveis para Survey do AAP:
 #   target_hosts  - Grupo da loja: loja1, loja2, etc.
 
@@ -68,6 +72,10 @@
           vlans_configured: "{{ 'VLAN' in vlan_check.stdout[0] }}"
           vlans_count: "{{ vlan_check.stdout[0] | regex_findall('\\d+\\s+\\w+') | length }}"
 
+    - name: Exibir resultado da coleta
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: {{ switch_data.model }} | SNMP={{ switch_data.snmp_configured }} NTP={{ switch_data.ntp_configured }} DNS={{ switch_data.dns_configured }} Banner={{ switch_data.banner_configured }} VLANs={{ switch_data.vlans_configured }}"
+
 # --- Play 2: Salvar JSON no servidor infra ---
 
 - name: Salvar dados de rede no infra-interna
@@ -107,5 +115,5 @@
           - "====================================="
           - "Coleta Network concluída"
           - "Switches coletados: {{ collected_switches | length }}"
-          - "Dados: http://{{ ansible_host }}/data/switches.json"
+          - "Dashboard: http://{{ ansible_host }}/"
           - "====================================="
