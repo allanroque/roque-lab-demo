@@ -139,6 +139,18 @@
         msg: "{{ item.item }}: {{ item.status.ActiveState }}"
       loop: "{{ services_status.results }}"
 
+    - name: Exibir link de acesso do painel
+      ansible.builtin.debug:
+        msg:
+          - "====================================="
+          - "Infra Interna - {{ site_name }} ({{ site_id }})"
+          - "====================================="
+          - "Painel Web: http://{{ ansible_host }}/"
+          - "Syslog:     UDP/TCP {{ ansible_host }}:514"
+          - "NTP:        {{ ansible_host }}:123"
+          - "TFTP:       {{ ansible_host }}:69"
+          - "====================================="
+
   handlers:
     - name: Reiniciar rsyslog
       ansible.builtin.systemd:

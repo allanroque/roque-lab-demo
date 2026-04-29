@@ -149,6 +149,16 @@
         state: started
         enabled: true
 
+    - name: Exibir link de acesso da aplicação
+      ansible.builtin.debug:
+        msg:
+          - "====================================="
+          - "POS App - {{ pos_store_name }} ({{ pos_store_id }})"
+          - "====================================="
+          - "Frontend: http://{{ ansible_host }}/"
+          - "API:      http://{{ ansible_host }}:{{ pos_app_port }}/api/health"
+          - "Dashboard: http://{{ ansible_host }}/api/dashboard"
+          - "====================================="
 
   handlers:
     - name: Reiniciar POS API
