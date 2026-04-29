@@ -34,8 +34,6 @@
     ntp_upstream: "{{ ntp_upstream | default('a.ntp.br') }}"
     syslog_retention: "{{ syslog_retention | default('30') }}"
     site_network: "{{ site_network | default('192.168.100.0/24') }}"
-    pdv_server_ip: "{{ pdv_server_ip | default('') }}"
-    store_switches: "{{ store_switches | default([]) }}"
     tftp_dir: "/var/lib/tftpboot"
     web_dir: "/usr/share/nginx/html"
 
@@ -119,10 +117,13 @@
         name: nginx
         state: present
 
-    - name: Converter store_switches se recebido como string
-      ansible.builtin.set_fact:
-        store_switches: "{{ store_switches | from_yaml }}"
-      when: store_switches is string
+    - name: Criar diretório de dados do dashboard
+      ansible.builtin.file:
+        path: "{{ web_dir }}/data"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
 
     - name: Deploy do painel web interativo
       ansible.builtin.template:

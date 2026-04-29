@@ -66,7 +66,7 @@
           image: "{{ cisco_facts.ansible_facts.ansible_net_image | default('N/A') }}"
           snmp_configured: "{{ snmp_check.stdout[0] | length > 0 }}"
           ntp_configured: "{{ 'synchronised' in (ntp_check.stdout[0] | lower) or 'synchronized' in (ntp_check.stdout[0] | lower) }}"
-          ntp_status: "{{ ntp_check.stdout[0] | regex_search('Clock is (.+)', '\\1') | default(['N/A']) | first }}"
+          ntp_status: "{{ ntp_check.stdout_lines[0] | default('N/A') }}"
           dns_configured: "{{ dns_check.stdout[0] | length > 0 }}"
           banner_configured: "{{ banner_check.stdout[0] | length > 0 }}"
           vlans_configured: "{{ 'VLAN' in vlan_check.stdout[0] }}"
