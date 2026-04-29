@@ -13,15 +13,11 @@
   gather_facts: false
 
   tasks:
-    - name: Configurar hostname e domínio
-      cisco.ios.ios_hostname:
-        config:
-          hostname: "{{ device_hostname }}"
-          domain_name: "{{ device_domain | default('edge.empresa.com.br') }}"
-
-    - name: Configurar servidores DNS
+    - name: Configurar hostname, domínio e DNS
       cisco.ios.ios_config:
         commands:
+          - "hostname {{ device_hostname }}"
+          - "ip domain name {{ device_domain | default('edge.empresa.com.br') }}"
           - "ip name-server {{ dns_server_primary | default('8.8.8.8') }}"
           - "ip name-server {{ dns_server_secondary | default('8.8.4.4') }}"
           - "ip domain lookup"

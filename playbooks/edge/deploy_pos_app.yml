@@ -12,7 +12,7 @@
 #   pos_app_port     - Porta da API (default: 5000)
 
 - name: Deploy aplicação POS 3 camadas - Edge
-  hosts: "{{ target_hosts | default('linux') }}:&linux"
+  hosts: "{{ target_hosts | default('pdv') }}:&pdv"
   gather_facts: true
 
   vars:
