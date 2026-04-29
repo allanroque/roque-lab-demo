@@ -8,6 +8,7 @@
 #   - Nginx (painel web de status do site)
 #
 # Variáveis para Survey do AAP:
+#   target_hosts     - Grupo alvo: linux (todos), loja1, loja2, etc.
 #   site_name       - Nome do site (ex: "Loja Centro SP 042")
 #   site_id         - ID do site (ex: "042")
 #   ntp_upstream     - Servidor NTP upstream (default: "a.ntp.br")
@@ -15,7 +16,7 @@
 #   site_network     - Rede local do site (default: "192.168.100.0/24")
 
 - name: Deploy servidor Infra-Interna - Edge
-  hosts: "{{ target_hosts | default('edge_infra') }}"
+  hosts: "{{ target_hosts | default('linux') }}:&linux"
   gather_facts: true
 
   vars:

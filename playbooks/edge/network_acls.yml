@@ -11,14 +11,10 @@
 #   acl_dst_port   - Porta de destino (ex: "22")
 
 - name: Configurar ACL em switches/routers Cisco - Edge
-  hosts: "{{ target_hosts | default('cisco') }}"
+  hosts: "{{ target_hosts | default('cisco') }}:&cisco"
   gather_facts: false
 
   tasks:
-    - name: Pular hosts que não são Cisco
-      ansible.builtin.meta: end_host
-      when: ansible_network_os is not defined or ansible_network_os != 'cisco.ios.ios'
-
     - name: Configurar ACL
       cisco.ios.ios_acls:
         config:

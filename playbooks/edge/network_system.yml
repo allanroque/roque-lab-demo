@@ -9,14 +9,10 @@
 #   log_server         - IP do servidor de syslog (ex: "192.168.100.10")
 
 - name: Configurar sistema em switches/routers Cisco - Edge
-  hosts: "{{ target_hosts | default('cisco') }}"
+  hosts: "{{ target_hosts | default('cisco') }}:&cisco"
   gather_facts: false
 
   tasks:
-    - name: Pular hosts que não são Cisco
-      ansible.builtin.meta: end_host
-      when: ansible_network_os is not defined or ansible_network_os != 'cisco.ios.ios'
-
     - name: Configurar hostname e domínio
       cisco.ios.ios_hostname:
         config:

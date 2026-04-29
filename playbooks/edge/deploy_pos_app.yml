@@ -5,13 +5,14 @@
 #   Nginx (frontend) → Flask API (backend) → MariaDB (banco de dados)
 #
 # Variáveis para Survey do AAP:
+#   target_hosts     - Grupo alvo: linux (todos), loja1, loja2, etc.
 #   pos_store_name   - Nome da loja (ex: "Loja Centro SP 042")
 #   pos_store_id     - ID da loja (ex: "042")
 #   pos_db_password  - Senha do banco de dados
 #   pos_app_port     - Porta da API (default: 5000)
 
 - name: Deploy aplicação POS 3 camadas - Edge
-  hosts: "{{ target_hosts | default('edge_pos') }}"
+  hosts: "{{ target_hosts | default('linux') }}:&linux"
   gather_facts: true
 
   vars:
