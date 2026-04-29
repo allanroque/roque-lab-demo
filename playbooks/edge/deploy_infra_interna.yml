@@ -127,7 +127,7 @@
 
     - name: Deploy do painel web interativo
       ansible.builtin.template:
-        src: templates/infra_dashboard.html.j2
+        src: templates/infra_dashboard_live.html.j2
         dest: "{{ web_dir }}/index.html"
         mode: "0644"
       notify: Reiniciar nginx
