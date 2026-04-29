@@ -1,0 +1,38 @@
+---
+# Playbook: Configuração SNMP em dispositivos Cisco (Edge/Lojas/PDV)
+#
+# Variáveis para Survey do AAP:
+#   snmp_ro_community  - Community string de leitura (RO)
+#   snmp_rw_community  - Community string de leitura/escrita (RW)
+#   snmp_contact       - Contato do responsável pelo equipamento
+#   snmp_location      - Localização física (ex: "Loja 042 - SP Centro")
+
+- name: Configurar SNMP em switches/routers Cisco - Edge
+  hosts: "{{ target_hosts | default('cisco_edge') }}"
+  gather_facts: false
+  connection: ansible.netcommon.network_cli
+
+  tasks:
+    - name: Configurar community strings SNMP
+      cisco.ios.ios_config:
+        commands:
+          - "snmp-server community {{ snmp_ro_community }} RO"
+          - "snmp-server community {{ snmp_rw_community }} RW"
+          - "snmp-server contact {{ snmp_contact | default('NOC - noc@empresa.com.br') }}"
+          - "snmp-server location {{ snmp_location | default('Edge Site') }}"
+
+    - name: Salvar configuração
+      cisco.ios.ios_config:
+        save_when: modified
+
+    - name: Validar configuração SNMP aplicada
+      cisco.ios.ios_command:
+        commands:
+          - show snmp community
+          - show snmp contact
+          - show snmp location
+      register: snmp_output
+
+    - name: Exibir resultado da validação
+      ansible.builtin.debug:
+        msg: "{{ snmp_output.stdout_lines }}"
