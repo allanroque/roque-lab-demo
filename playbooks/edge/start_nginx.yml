@@ -1,0 +1,15 @@
+---
+# Inicia e habilita o nginx nos servidores PDV da loja (Edge).
+# Variável: target_hosts — grupo no inventário (ex.: loja1).
+
+- name: Start nginx no PDV
+  hosts: "{{ target_hosts }}:&pdv"
+  gather_facts: false
+  become: true
+
+  tasks:
+    - name: nginx started + enabled
+      ansible.builtin.systemd:
+        name: nginx
+        state: started
+        enabled: true
