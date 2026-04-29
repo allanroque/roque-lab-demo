@@ -59,13 +59,17 @@
 
     # --- Camada 2: Backend (Flask API) ---
 
-    - name: Instalar dependências do backend
+    - name: Instalar Python e pip
       ansible.builtin.dnf:
         name:
           - python3
           - python3-pip
-          - python3-flask
           - python3-PyMySQL
+        state: present
+
+    - name: Instalar Flask via pip
+      ansible.builtin.pip:
+        name: flask
         state: present
 
     - name: Criar diretório da aplicação
