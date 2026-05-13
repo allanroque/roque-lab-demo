@@ -1,0 +1,146 @@
+---
+# ============================================================
+# Debug de variáveis Ansible (magic, facts, contexto AAP/credenciais)
+# ============================================================
+# Objetivo
+#   Exibir variáveis úteis para troubleshooting em execuções locais e no AAP,
+#   incluindo magic variables, prioridade de variáveis e *metadados* ligados
+#   a credenciais de máquina (sem imprimir segredos).
+#
+# Variáveis opcionais (Survey no AAP ou -e):
+#   debug_list_all_hostvar_keys (bool, default: false)
+#     Se true, lista apenas os *nomes* das chaves em hostvars para este host.
+#   debug_show_extended_magic (bool, default: true)
+#     Se true, inclui um bloco extra de magic variables comuns.
+#
+# Tags:
+#   - debug_magic | debug_facts | debug_connection | debug_aap | debug_hostvars_keys | all
+#
+# Nota AAP / credenciais
+#   Credenciais SSH/Linux injetadas pelo Controller tipicamente definem (entre
+#   outras) ansible_user, ansible_password, ansible_ssh_private_key_file,
+#   ansible_ssh_common_args, ansible_become_password. Valores sensíveis não são
+#   ecoados — apenas presença/caminhos seguros quando aplicável.
+# ============================================================
+
+- name: Debug de variáveis Ansible (magic, facts, credenciais AAP — modo seguro)
+  hosts: all
+  gather_facts: true
+  become: false
+
+  vars:
+    debug_list_all_hostvar_keys: false
+    debug_show_extended_magic: true
+
+  tasks:
+    - name: Contexto do play e inventário (magic variables comuns)
+      ansible.builtin.debug:
+        msg:
+          inventory_hostname: "{{ inventory_hostname | default('N/A') }}"
+          ansible_hostname: "{{ ansible_hostname | default('N/A') }}"
+          ansible_fqdn: "{{ ansible_fqdn | default('N/A') }}"
+          group_names: "{{ group_names | default([]) }}"
+          ansible_play_name: "{{ ansible_play_name | default('N/A') }}"
+          ansible_play_hosts: "{{ ansible_play_hosts | default([]) }}"
+          ansible_play_batch: "{{ ansible_play_batch | default([]) }}"
+          play_hosts: "{{ play_hosts | default([]) }}"
+          ansible_check_mode: "{{ ansible_check_mode | default(false) }}"
+          ansible_diff_mode: "{{ ansible_diff_mode | default(false) }}"
+          ansible_verbosity: "{{ ansible_verbosity | default(0) }}"
+      tags:
+        - debug_magic
+        - debug
+
+    - name: Origem de variáveis e limites (útil no Controller / linha de comando)
+      ansible.builtin.debug:
+        msg:
+          ansible_inventory_sources: "{{ ansible_inventory_sources | default([]) }}"
+          ansible_config_file: "{{ ansible_config_file | default('N/A') }}"
+          ansible_limit: "{{ ansible_limit | default('') }}"
+          ansible_run_tags: "{{ ansible_run_tags | default([]) }}"
+          ansible_skip_tags: "{{ ansible_skip_tags | default([]) }}"
+      tags:
+        - debug_magic
+        - debug
+
+    - name: Metadados injetados pelo Automation Controller (quando aplicável)
+      ansible.builtin.debug:
+        msg:
+          tower_job_id: "{{ tower_job_id | default('(não definido — ex. execução fora do AAP)') }}"
+          tower_job_template_id: "{{ tower_job_template_id | default('(n/d)') }}"
+          tower_job_template_name: "{{ tower_job_template_name | default('(n/d)') }}"
+          tower_user_name: "{{ tower_user_name | default('(n/d)') }}"
+      tags:
+        - debug_aap
+        - debug
+
+    - name: Metadados de conexão/credencial (sem senhas nem chave privada)
+      ansible.builtin.debug:
+        msg:
+          ansible_connection: "{{ ansible_connection | default('ssh') }}"
+          ansible_host: "{{ ansible_host | default(inventory_hostname) }}"
+          ansible_port: "{{ ansible_port | default(22) }}"
+          ansible_user: "{{ ansible_user | default('N/A') }}"
+          ansible_ssh_private_key_file: "{{ ansible_ssh_private_key_file | default('') }}"
+          ansible_password_defined: "{{ ansible_password is defined }}"
+          ansible_become_password_defined: "{{ ansible_become_password is defined }}"
+          ansible_ssh_pipelining: "{{ ansible_ssh_pipelining | default(false) }}"
+      tags:
+        - debug_connection
+        - debug
+
+    - name: Versão do Ansible no control node e Python do alvo
+      ansible.builtin.debug:
+        msg:
+          ansible_version: "{{ ansible_version | default({}) }}"
+          ansible_python_interpreter: "{{ ansible_python_interpreter | default('(implicit)') }}"
+          ansible_playbook_python: "{{ ansible_playbook_python | default('N/A') }}"
+          discovered_interpreter_python: "{{ ansible_facts['discovered_interpreter_python'] | default('N/A') }}"
+      tags:
+        - debug_facts
+        - debug
+
+    - name: Subconjunto de facts do sistema (identificação)
+      ansible.builtin.debug:
+        msg:
+          ansible_system: "{{ ansible_system | default('N/A') }}"
+          ansible_distribution: "{{ ansible_distribution | default('N/A') }}"
+          ansible_distribution_version: "{{ ansible_distribution_version | default('N/A') }}"
+          ansible_architecture: "{{ ansible_architecture | default('N/A') }}"
+          ansible_kernel: "{{ ansible_kernel | default('N/A') }}"
+      tags:
+        - debug_facts
+        - debug
+
+    - name: Magic variables adicionais (paths e grupos)
+      when: debug_show_extended_magic | bool
+      ansible.builtin.debug:
+        msg:
+          inventory_dir: "{{ inventory_dir | default('N/A') }}"
+          inventory_file: "{{ inventory_file | default('N/A') }}"
+          playbook_dir: "{{ playbook_dir | default('N/A') }}"
+          ansible_role_name: "{{ ansible_role_name | default('(n/d — fora de role)') }}"
+          groups_keys_sample: "{{ groups.keys() | list | sort }}"
+      tags:
+        - debug_magic
+        - debug
+
+    - name: Exemplo de hostvars no primeiro host do play
+      when: (ansible_play_hosts | default([]) | length) > 0
+      vars:
+        _primeiro_host_no_play: "{{ ansible_play_hosts[0] }}"
+      ansible.builtin.debug:
+        msg:
+          primeiro_host_no_play: "{{ _primeiro_host_no_play }}"
+          inventory_hostname_via_hostvars: "{{ hostvars[_primeiro_host_no_play].inventory_hostname | default('N/A') }}"
+      tags:
+        - debug_magic
+        - debug
+
+    - name: Listar apenas nomes de variáveis em hostvars (ordenado)
+      when: debug_list_all_hostvar_keys | bool
+      ansible.builtin.debug:
+        msg: "{{ hostvars[inventory_hostname] | dict2items | map(attribute='key') | list | sort }}"
+      tags:
+        - debug_hostvars_keys
+        - debug
