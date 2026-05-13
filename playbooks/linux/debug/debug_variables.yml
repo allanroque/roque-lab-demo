@@ -1,3 +1,3 @@
 ---
-- name: Importar debug de credencial AAP (wrapper para Job Template)
-  import_playbook: debug_aap_credential_user.yml
+- name: Importar debug simples de credencial (user/senha)
+  import_playbook: debug_credential_simple.yml
