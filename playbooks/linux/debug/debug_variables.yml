@@ -14,14 +14,6 @@
           ansible_ssh_private_key_file: "{{ ansible_ssh_private_key_file | default('(not defined)') }}"
           ansible_ssh_private_key_pem: "{{ ansible_ssh_private_key | default('(not defined)') }}"
 
-    - name: AWS — extra vars (apenas se injetaste esses nomes no credential / survey)
-      ansible.builtin.debug:
-        msg:
-          aws_access_key: "{{ aws_access_key | default('(not defined)') }}"
-          aws_secret_key: "{{ aws_secret_key | default('(not defined)') }}"
-          region_name: "{{ region_name | default('(not defined)') }}"
-          secret_name: "{{ secret_name | default('(not defined)') }}"
-
     - name: AWS — ambiente (credencial tipo Amazon Web Services no JT)
       ansible.builtin.debug:
         msg:
