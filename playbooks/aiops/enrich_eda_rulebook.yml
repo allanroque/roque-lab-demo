@@ -63,7 +63,7 @@
     - name: Montar URL autenticada para o push
       ansible.builtin.set_fact:
         repo_authed_url: "{{ repo_url_raw | regex_replace('^https://', 'https://' + git_user + ':' + git_token + '@') }}"
-      no_log: true
+      no_log: false
 
     - name: Configurar remote 'origin' com URL autenticada
       ansible.builtin.command:
@@ -75,7 +75,7 @@
           - origin
           - "{{ repo_authed_url }}"
       changed_when: true
-      no_log: true
+      no_log: false
 
     - name: Adicionar nova regra no rulebook (idempotente, com marker por alertname)
       ansible.builtin.blockinfile:
@@ -141,7 +141,7 @@
           - origin
           - "{{ git_branch }}"
       changed_when: true
-      no_log: true
+      no_log: false
 
     - name: Capturar SHA
       ansible.builtin.command:

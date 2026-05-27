@@ -55,7 +55,7 @@
     - name: Montar URL autenticada para o push
       ansible.builtin.set_fact:
         repo_authed_url: "{{ repo_url_raw | regex_replace('^https://', 'https://' + git_user + ':' + git_token + '@') }}"
-      no_log: true
+      no_log: false
 
     - name: Configurar remote 'origin' com URL autenticada (apenas para push)
       ansible.builtin.command:
@@ -67,7 +67,7 @@
           - origin
           - "{{ repo_authed_url }}"
       changed_when: true
-      no_log: true
+      no_log: false
 
     - name: Garantir que diretório ai-generated existe
       ansible.builtin.file:
@@ -127,7 +127,7 @@
           - "{{ git_branch }}"
       register: git_push_out
       changed_when: true
-      no_log: true
+      no_log: false
 
     - name: Capturar SHA do commit
       ansible.builtin.command:
