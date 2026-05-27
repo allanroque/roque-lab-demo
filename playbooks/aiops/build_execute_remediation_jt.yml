@@ -125,14 +125,18 @@
       ansible.builtin.set_fact:
         dynamic_jt_id: "{{ jt_create.json.id if jt_create.status in [200, 201] else jt_lookup.json.results[0].id }}"
 
-    - name: Anexar credential SSH ao JT (id como inteiro)
+    - name: Construir payload da credential (id como inteiro)
+      ansible.builtin.set_fact:
+        cred_payload: "{{ {'id': ssh_credential_id | int} }}"
+
+    - name: Anexar credential SSH ao JT
       ansible.builtin.uri:
         url: "{{ controller_host }}/api/controller/v2/job_templates/{{ dynamic_jt_id }}/credentials/"
         method: POST
         headers:
           Authorization: "Bearer {{ controller_token }}"
-          Content-Type: "application/json"
-        body: '{"id": {{ ssh_credential_id | int }}}'
+        body_format: json
+        body: "{{ cred_payload }}"
         validate_certs: "{{ controller_verify_ssl }}"
         status_code: [200, 201, 204, 400]
       register: cred_attach
