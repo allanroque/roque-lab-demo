@@ -24,6 +24,7 @@
   vars:
     alert_family_var: "{{ alert_family | default('apache') }}"
     prom_url: "{{ prometheus_url | default('http://localhost:9090') }}"
+    prom_validate_certs: "{{ (prometheus_validate_certs | default(false)) | bool }}"
     max_retries_var: "{{ max_retries | default(12) | int }}"
     retry_delay_var: "{{ retry_delay | default(5) | int }}"
     family_name_keywords:
@@ -44,6 +45,7 @@
         method: GET
         return_content: true
         status_code: 200
+        validate_certs: "{{ prom_validate_certs }}"
       register: prom_alerts
       retries: "{{ max_retries_var }}"
       delay: "{{ retry_delay_var }}"
