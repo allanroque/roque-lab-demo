@@ -231,10 +231,10 @@
     # ===================== POST-CHECK =====================
     - name: Pausa para o Prometheus avaliar o alerta
       ansible.builtin.pause:
-        seconds: "{{ wait_after_break }}"
+        seconds: "{{ wait_after_break | int }}"
       when:
         - chaos_mode == 'break'
-        - wait_after_break > 0
+        - (wait_after_break | int) > 0
 
     - name: Capturar status final dos serviços tocados
       ansible.builtin.shell: |
