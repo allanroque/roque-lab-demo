@@ -1,27 +1,16 @@
 ---
 # ==============================================================================
-# EDA Rulebook — Alertmanager Events (visão geral / debug)
+# EDA Rulebook — SELinux Disabled Remediation
 # ==============================================================================
 # Objetivo:
-#   Capturar TODOS os alertas vindos do Alertmanager e imprimi-los via debug,
-#   sem executar nenhuma ação de remediação. Útil para ter uma visão de quais
-#   alertas estão chegando ao EDA.
+#   Detectar o alerta SELinuxDisabled vindo do Alertmanager e disparar o
+#   workflow WF-REMEDIATION-SELINUX para reabilitar o SELinux no host afetado.
 #
 # Fluxo:
-#   Prometheus → Alertmanager → EDA :5050/prometheus → debug (stdout)
-#
-# Configuração esperada no Alertmanager (alertmanager/config.yml):
-#   route:
-#     receiver: webhook_receiver
-#     group_by: ['alertname', 'instance']
-#   receivers:
-#     - name: 'webhook_receiver'
-#       webhook_configs:
-#         - url: 'http://<EDA>:5050/prometheus'
-#           send_resolved: true
+#   Prometheus → Alertmanager → EDA :5050/prometheus → WF-REMEDIATION-SELINUX
 # ==============================================================================
 
-- name: Alertmanager events — visão geral dos alertas (sem ação)
+- name: SELinux Disabled — remediation
   hosts: localhost
 
   sources:
@@ -35,15 +24,14 @@
 
   rules:
 
-    - name: "Print de qualquer alerta recebido do Alertmanager"
-      condition: event.alert is defined
+    - name: "SELinux Disabled - Firing"
+      condition: event.alert.labels.alertname == "SELinuxDisabled" and event.alert.status == "firing"
       action:
-        debug:
-          msg: >-
-            [ALERT] name={{ event.alert.labels.alertname | default('?') }}
-            status={{ event.alert.status | default('?') }}
-            severity={{ event.alert.labels.severity | default('?') }}
-            host={{ event.meta.hosts | default('?') }}
-            instance={{ event.alert.labels.instance | default('?') }}
-            summary={{ event.alert.annotations.summary | default('') }}
-            description={{ event.alert.annotations.description | default('') }}
+        run_workflow_template:
+          name: "WF-REMEDIATION-SELINUX"
+          organization: "ROQUE"
+          job_args:
+            limit: "{{ event.meta.hosts }}"
+          extra_vars:
+            alerta: "{{ event.alert.labels.alertname }}"
+            hostname: "{{ event.alert.labels.instance }}"
