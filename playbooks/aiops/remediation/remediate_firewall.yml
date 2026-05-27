@@ -1,0 +1,64 @@
+---
+# =========================================================================
+# Playbook: REMEDIATION-FIREWALL
+# =========================================================================
+# Acionado pelo EDA quando FirewalldDown fira.
+# Restaura o firewalld: unmask + enable + start + reload de rules.
+# =========================================================================
+- name: REMEDIATION-FIREWALL — restart firewalld
+  hosts: "{{ target_host | default('all') | regex_replace(':[0-9]+$', '') }}"
+  become: true
+  gather_facts: true
+  vars:
+    _alertname: "{{ alertname | default('FirewalldDown') }}"
+    _service: firewalld
+
+  tasks:
+    - name: Diagnosticar estado atual do {{ _service }}
+      ansible.builtin.command: "systemctl is-active {{ _service }}"
+      register: svc_state
+      changed_when: false
+      failed_when: false
+
+    - name: Desmascarar, habilitar e iniciar {{ _service }}
+      ansible.builtin.systemd:
+        name: "{{ _service }}"
+        masked: false
+        enabled: true
+        state: started
+
+    - name: Aguardar inicializacao
+      ansible.builtin.pause:
+        seconds: 3
+
+    - name: Reload de rules do firewalld
+      ansible.posix.firewalld:
+        state: enabled
+        immediate: true
+        permanent: true
+        service: ssh
+      register: firewall_reload
+      failed_when: false
+
+    - name: Verificar estado pos-remediacao
+      ansible.builtin.command: "systemctl is-active {{ _service }}"
+      register: svc_after
+      changed_when: false
+
+    - name: Exibir resultado
+      ansible.builtin.debug:
+        msg:
+          - "Alerta: {{ _alertname }}"
+          - "Host: {{ inventory_hostname }}"
+          - "Antes: {{ svc_state.stdout | default('?') }}"
+          - "Depois: {{ svc_after.stdout }}"
+
+    - name: Exportar resultado
+      ansible.builtin.set_stats:
+        aggregate: false
+        data:
+          stats_remediation_service: "{{ _service }}"
+          stats_remediation_host: "{{ inventory_hostname }}"
+          stats_remediation_state_before: "{{ svc_state.stdout | default('?') }}"
+          stats_remediation_state_after: "{{ svc_after.stdout }}"
+          stats_remediation_success: "{{ svc_after.stdout == 'active' }}"

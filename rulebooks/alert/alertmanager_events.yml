@@ -52,6 +52,43 @@
             service_name: "httpd"
             alertname: "AppDown"
     # END AIOPS AUTO-LEARN: AppDown
+
+    - name: "Auto-remediate RsyslogDown"
+      condition: event.alert.labels.alertname == "RsyslogDown" and event.alert.status == "firing"
+      action:
+        run_job_template:
+          name: "REMEDIATION-RSYSLOG"
+          organization: "ROQUE"
+          job_args:
+            limit: "{{ event.meta.hosts }}"
+          extra_vars:
+            alertname: "{{ event.alert.labels.alertname }}"
+            target_host: "{{ event.alert.labels.instance }}"
+
+    - name: "Auto-remediate ChronyDown"
+      condition: event.alert.labels.alertname == "ChronyDown" and event.alert.status == "firing"
+      action:
+        run_job_template:
+          name: "REMEDIATION-CHRONY"
+          organization: "ROQUE"
+          job_args:
+            limit: "{{ event.meta.hosts }}"
+          extra_vars:
+            alertname: "{{ event.alert.labels.alertname }}"
+            target_host: "{{ event.alert.labels.instance }}"
+
+    - name: "Auto-remediate FirewalldDown"
+      condition: event.alert.labels.alertname == "FirewalldDown" and event.alert.status == "firing"
+      action:
+        run_job_template:
+          name: "REMEDIATION-FIREWALL"
+          organization: "ROQUE"
+          job_args:
+            limit: "{{ event.meta.hosts }}"
+          extra_vars:
+            alertname: "{{ event.alert.labels.alertname }}"
+            target_host: "{{ event.alert.labels.instance }}"
+
     - name: "Print de qualquer alerta recebido do Alertmanager"
       condition: event.alert is defined
       action:

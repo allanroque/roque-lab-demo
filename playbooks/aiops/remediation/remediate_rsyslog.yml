@@ -1,0 +1,55 @@
+---
+# =========================================================================
+# Playbook: REMEDIATION-RSYSLOG
+# =========================================================================
+# Acionado pelo EDA quando RsyslogDown fira no Prometheus/Alertmanager.
+# Restaura o rsyslog: unmask + enable + start, com diagnostico.
+#
+# Vars (do EDA):
+#   target_host  - host alvo (alert.labels.instance, normalmente "host:port")
+#   alertname    - "RsyslogDown"
+# =========================================================================
+- name: REMEDIATION-RSYSLOG — restart rsyslog
+  hosts: "{{ target_host | default('all') | regex_replace(':[0-9]+$', '') }}"
+  become: true
+  gather_facts: true
+  vars:
+    _alertname: "{{ alertname | default('RsyslogDown') }}"
+    _service: rsyslog
+
+  tasks:
+    - name: Diagnosticar estado atual do {{ _service }}
+      ansible.builtin.command: "systemctl is-active {{ _service }}"
+      register: svc_state
+      changed_when: false
+      failed_when: false
+
+    - name: Desmascarar, habilitar e iniciar {{ _service }}
+      ansible.builtin.systemd:
+        name: "{{ _service }}"
+        masked: false
+        enabled: true
+        state: started
+
+    - name: Verificar estado pos-remediacao
+      ansible.builtin.command: "systemctl is-active {{ _service }}"
+      register: svc_after
+      changed_when: false
+
+    - name: Exibir resultado
+      ansible.builtin.debug:
+        msg:
+          - "Alerta: {{ _alertname }}"
+          - "Host: {{ inventory_hostname }}"
+          - "Antes: {{ svc_state.stdout | default('?') }}"
+          - "Depois: {{ svc_after.stdout }}"
+
+    - name: Exportar resultado
+      ansible.builtin.set_stats:
+        aggregate: false
+        data:
+          stats_remediation_service: "{{ _service }}"
+          stats_remediation_host: "{{ inventory_hostname }}"
+          stats_remediation_state_before: "{{ svc_state.stdout | default('?') }}"
+          stats_remediation_state_after: "{{ svc_after.stdout }}"
+          stats_remediation_success: "{{ svc_after.stdout == 'active' }}"

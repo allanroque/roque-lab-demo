@@ -1,0 +1,184 @@
+---
+# =========================================================================
+# Playbook: bootstrap_remediation_jts.yml
+# =========================================================================
+# One-shot:
+#   1) Cria 3 JTs (REMEDIATION-RSYSLOG, -CHRONY, -FIREWALL) ja com SSH cred
+#   2) Sync Controller project (PROJ-GIT-ROQUE-LAB)
+#   3) Sync EDA project (descobre via search por nome ou via id passado)
+#   4) Restart Activation ALERTMANAGER-EVENTS-ROQUE (id 4)
+#
+# Credentials necessarias para o LAUNCH:
+#   - CRED-AAP-ROQUE (id 38) — controller token
+# =========================================================================
+- name: BOOTSTRAP REMEDIATION JTs
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    controller_host: "{{ lookup('env', 'CONTROLLER_HOST') | default(lookup('env', 'AAP_HOSTNAME'), true) }}"
+    controller_token: "{{ lookup('env', 'CONTROLLER_OAUTH_TOKEN') | default(lookup('env', 'AAP_TOKEN'), true) }}"
+    controller_verify_ssl: "{{ (lookup('env', 'CONTROLLER_VERIFY_SSL') | default('false', true)) | bool }}"
+    project_id: "{{ aiops_project_id | default(278) | int }}"
+    inventory_id: "{{ aiops_inventory_id | default(26) | int }}"
+    organization_id: "{{ aiops_org_id | default(15) | int }}"
+    execution_environment_id: "{{ aiops_ee_id | default(13) | int }}"
+    ssh_credential_id: "{{ aiops_ssh_credential_id | default(34) | int }}"
+    eda_activation_id: "{{ activation_id | default(4) | int }}"
+    eda_project_id: "{{ eda_project | default(4) | int }}"
+    remediation_jts:
+      - name: REMEDIATION-RSYSLOG
+        description: "Remedia rsyslog: unmask + enable + start. Acionado pelo EDA quando RsyslogDown fira."
+        playbook: playbooks/aiops/remediation/remediate_rsyslog.yml
+      - name: REMEDIATION-CHRONY
+        description: "Remedia chronyd: unmask + enable + start + sync NTP. Acionado pelo EDA quando ChronyDown fira."
+        playbook: playbooks/aiops/remediation/remediate_chrony.yml
+      - name: REMEDIATION-FIREWALL
+        description: "Remedia firewalld: unmask + enable + start. Acionado pelo EDA quando FirewalldDown fira."
+        playbook: playbooks/aiops/remediation/remediate_firewall.yml
+
+  tasks:
+    - name: Validar credenciais
+      ansible.builtin.assert:
+        that:
+          - controller_host | length > 0
+          - controller_token | length > 0
+
+    - name: Criar cada JT de remediacao (status 400 se ja existir)
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/job_templates/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        body_format: json
+        body:
+          name: "{{ item.name }}"
+          description: "{{ item.description }}"
+          job_type: "run"
+          inventory: "{{ inventory_id }}"
+          project: "{{ project_id }}"
+          playbook: "{{ item.playbook }}"
+          execution_environment: "{{ execution_environment_id }}"
+          organization: "{{ organization_id }}"
+          verbosity: 1
+          become_enabled: true
+          ask_variables_on_launch: true
+          ask_limit_on_launch: true
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: [200, 201, 400]
+      loop: "{{ remediation_jts }}"
+      register: create_results
+
+    - name: Resolver ids dos JTs (lookup quando ja existia)
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/job_templates/?name={{ item.name | urlencode }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        return_content: true
+      loop: "{{ remediation_jts }}"
+      register: lookup_results
+
+    - name: Coletar ids resolvidos
+      ansible.builtin.set_fact:
+        remediation_jt_ids: "{{ lookup_results.results | map(attribute='json.results') | map('first') | map(attribute='id') | list }}"
+
+    - name: Anexar SSH cred (id como int) a cada JT
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/job_templates/{{ item }}/credentials/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        body_format: json
+        body: "{{ {'id': ssh_credential_id | int} }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: [200, 201, 204, 400]
+      loop: "{{ remediation_jt_ids }}"
+
+    - name: Disparar project_update no Controller
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/projects/{{ project_id }}/update/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: [201, 202]
+        return_content: true
+      register: ctl_pu_start
+
+    - name: Aguardar project_update terminar
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/project_updates/{{ ctl_pu_start.json.id }}/"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        return_content: true
+      register: ctl_pu_check
+      until: ctl_pu_check.json.status in ['successful', 'failed', 'error', 'canceled']
+      retries: 30
+      delay: 3
+
+    - name: Disparar sync no EDA project (id {{ eda_project_id }})
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/eda/v1/projects/{{ eda_project_id }}/sync/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: [200, 201, 202]
+        return_content: true
+      register: eda_sync_out
+
+    - name: Aguardar sync EDA terminar
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/eda/v1/projects/{{ eda_project_id }}/"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        return_content: true
+      register: eda_proj_check
+      until: eda_proj_check.json.import_state in ['completed', 'failed']
+      retries: 30
+      delay: 3
+
+    - name: Desabilitar Activation EDA (para recarregar rulebook)
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/eda/v1/activations/{{ eda_activation_id }}/disable/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: [200, 204]
+
+    - name: Pausa para EDA processar disable
+      ansible.builtin.pause:
+        seconds: 5
+
+    - name: Habilitar Activation novamente
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/eda/v1/activations/{{ eda_activation_id }}/enable/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: [200, 204]
+
+    - name: Exibir resumo
+      ansible.builtin.debug:
+        msg:
+          - "JT ids criados/atualizados: {{ remediation_jt_ids }}"
+          - "Controller project sync: {{ ctl_pu_check.json.status | default('?') }}"
+          - "EDA project sync: {{ eda_proj_check.json.import_state | default('?') }}"
+          - "Activation {{ eda_activation_id }} reiniciada"
+
+    - name: Exportar stats
+      ansible.builtin.set_stats:
+        aggregate: false
+        data:
+          stats_remediation_jt_ids: "{{ remediation_jt_ids }}"
+          stats_controller_sync: "{{ ctl_pu_check.json.status | default('?') }}"
+          stats_eda_sync: "{{ eda_proj_check.json.import_state | default('?') }}"
+          stats_activation_id: "{{ eda_activation_id }}"
