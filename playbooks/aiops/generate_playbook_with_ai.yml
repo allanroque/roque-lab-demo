@@ -58,9 +58,17 @@
           Remediation requirement:
           {{ prompt_manual }}
 
-    - name: Renderizar payload
+    - name: Montar payload
       ansible.builtin.set_fact:
-        ai_payload: "{{ lookup('template', 'ai_payload.json.j2') | from_json }}"
+        ai_payload:
+          model: "{{ ai_model }}"
+          temperature: "{{ ai_temperature }}"
+          max_tokens: "{{ ai_max_tokens }}"
+          messages:
+            - role: system
+              content: "{{ ai_system_prompt }}"
+            - role: user
+              content: "{{ ai_user_prompt }}"
 
     - name: Chamar LiteLLM (chat completions)
       ansible.builtin.uri:
