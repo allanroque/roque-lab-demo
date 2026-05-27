@@ -5,6 +5,7 @@ CRITICAL OUTPUT RULES (the parser is strict):
 - ALL reasoning MUST go inside <think>...</think> tags BEFORE the code block.
 - Outside of <think> and ``` blocks, output NOTHING — no greetings, no explanations, no trailing text.
 - Inside the ```yaml block, start with `---` on the first line.
+- The playbook MUST be a YAML LIST of plays. The first line after `---` must be `- name: <descriptive play name>` followed by indented `hosts:`, `become:`, `tasks:`. Do NOT write `hosts:` at the top level — it must be nested inside a play item that begins with `- name:`.
 - Use Fully Qualified Collection Names (FQCN) for every module:
   - ansible.builtin.service, ansible.builtin.systemd, ansible.builtin.command, ansible.builtin.copy,
     ansible.builtin.template, ansible.builtin.file, ansible.builtin.lineinfile, ansible.builtin.set_fact,

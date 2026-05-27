@@ -125,6 +125,19 @@
       ansible.builtin.set_fact:
         dynamic_jt_id: "{{ jt_create.json.id if jt_create.status in [200, 201] else jt_lookup.json.results[0].id }}"
 
+    - name: Garantir que JT aponta para o playbook gerado mais recente (PATCH)
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/job_templates/{{ dynamic_jt_id }}/"
+        method: PATCH
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        body_format: json
+        body:
+          playbook: "{{ _stats_path }}"
+          limit: "{{ _target_host }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: [200]
+
     - name: Construir payload da credential (id como inteiro)
       ansible.builtin.set_fact:
         cred_payload: "{{ {'id': ssh_credential_id | int} }}"

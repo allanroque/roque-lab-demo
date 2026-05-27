@@ -113,14 +113,15 @@
       ansible.builtin.set_fact:
         ai_final_yaml: "{{ ai_yaml_only if (ai_yaml_only is match('^---')) else ('---\n' + ai_yaml_only) }}"
 
-    - name: Validar que parece YAML válido
+    - name: Validar que parece YAML válido (lista de plays, sem shell/raw)
       ansible.builtin.assert:
         that:
+          - ai_final_yaml is search('(?m)^- (name|hosts):')
           - ai_final_yaml is search('hosts:')
-          - ai_final_yaml is search('tasks:') or ai_final_yaml is search('- name:')
+          - ai_final_yaml is search('tasks:')
           - ai_final_yaml is not search('ansible.builtin.shell')
           - ai_final_yaml is not search('ansible.builtin.raw')
-        fail_msg: "Playbook gerado pela IA parece inválido. Conteúdo:\n{{ ai_final_yaml }}"
+        fail_msg: "Playbook gerado pela IA parece inválido (esperado lista de plays comecando com '- name:' ou '- hosts:'). Conteúdo:\n{{ ai_final_yaml }}"
 
     - name: Definir nome do arquivo
       ansible.builtin.set_fact:
