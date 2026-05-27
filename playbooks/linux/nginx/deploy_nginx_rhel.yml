@@ -126,6 +126,26 @@
         - nginx
         - cleanup
 
+    # ── Firewalld ────────────────────────────────────────────────────────────
+    - name: Coletar facts de servicos
+      ansible.builtin.service_facts:
+      tags:
+        - nginx
+        - firewall
+
+    - name: Permitir porta do Nginx no firewalld
+      ansible.posix.firewalld:
+        port: "{{ nginx_port }}/tcp"
+        permanent: true
+        state: enabled
+        immediate: true
+      when:
+        - ansible_facts.services['firewalld.service'] is defined
+        - ansible_facts.services['firewalld.service']['state'] == 'running'
+      tags:
+        - nginx
+        - firewall
+
     - name: Garantir Nginx habilitado e em execução
       ansible.builtin.systemd:
         name: nginx

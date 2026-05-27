@@ -75,6 +75,26 @@
         - postgres
         - config
 
+    # ── Firewalld ────────────────────────────────────────────────────────────
+    - name: Coletar facts de servicos
+      ansible.builtin.service_facts:
+      tags:
+        - postgres
+        - firewall
+
+    - name: Permitir porta do PostgreSQL no firewalld
+      ansible.posix.firewalld:
+        port: "{{ postgres_port }}/tcp"
+        permanent: true
+        state: enabled
+        immediate: true
+      when:
+        - ansible_facts.services['firewalld.service'] is defined
+        - ansible_facts.services['firewalld.service']['state'] == 'running'
+      tags:
+        - postgres
+        - firewall
+
     # ── Servico ──────────────────────────────────────────────────────────────
     - name: Garantir PostgreSQL habilitado e em execucao
       ansible.builtin.service:
