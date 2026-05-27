@@ -111,7 +111,11 @@
 
     - name: Garantir que começa com ---
       ansible.builtin.set_fact:
-        ai_final_yaml: "{{ ai_yaml_only if (ai_yaml_only is match('^---')) else ('---\n' + ai_yaml_only) }}"
+        ai_with_header: "{{ ai_yaml_only if (ai_yaml_only is match('^---')) else ('---\n' + ai_yaml_only) }}"
+
+    - name: Remover changed_when/failed_when bool aninhados em args do módulo (bug recorrente da IA)
+      ansible.builtin.set_fact:
+        ai_final_yaml: "{{ ai_with_header | regex_replace('(?m)^\\s{6,}(changed_when|failed_when):\\s*(true|false)\\s*$\\n?', '') }}"
 
     - name: Validar que parece YAML válido (lista de plays, sem shell/raw)
       ansible.builtin.assert:
