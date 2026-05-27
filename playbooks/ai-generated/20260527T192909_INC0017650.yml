@@ -1,0 +1,28 @@
+---
+- name: Remediate httpd service issues on server01
+  hosts: server01.aroque.com.br
+  become: true
+  tasks:
+    - name: Unmask httpd service
+      ansible.builtin.systemd:
+        name: httpd
+        masked: false
+        state: started
+    
+    - name: Enable httpd service
+      ansible.builtin.systemd:
+        name: httpd
+        enabled: true
+        state: started
+    
+    - name: Start httpd service
+      ansible.builtin.systemd:
+        name: httpd
+        state: started
+    
+    - name: Report remediation success
+      ansible.builtin.set_stats:
+        aggregate: false
+        data:
+          stats_remediation_action: "Started, enabled, and unmasked httpd service"
+          stats_remediation_success: true
