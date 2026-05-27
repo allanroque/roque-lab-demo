@@ -1,5 +1,5 @@
 ---
-- name: SELinux Disabled — remediation
+- name: Alertmanager events
   hosts: localhost
 
   sources:
@@ -23,3 +23,16 @@
           extra_vars:
             alerta: "{{ event.alert.labels.alertname }}"
             hostname: "{{ event.alert.labels.instance }}"
+
+    - name: "Print de qualquer alerta recebido do Alertmanager"
+      condition: event.alert is defined
+      action:
+        debug:
+          msg: >-
+            [ALERT] name={{ event.alert.labels.alertname | default('?') }}
+            status={{ event.alert.status | default('?') }}
+            severity={{ event.alert.labels.severity | default('?') }}
+            host={{ event.meta.hosts | default('?') }}
+            instance={{ event.alert.labels.instance | default('?') }}
+            summary={{ event.alert.annotations.summary | default('') }}
+            description={{ event.alert.annotations.description | default('') }}
