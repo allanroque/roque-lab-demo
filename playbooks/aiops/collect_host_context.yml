@@ -1,0 +1,54 @@
+---
+# =========================================================================
+# Playbook: AIOPS — Collect Host Context
+# =========================================================================
+# Coleta contexto do host (OS, kernel, disco, top procs) para alimentar o
+# prompt de RCA da IA.
+#
+# Variáveis (Survey AAP):
+#   target_host  - Host alvo
+# =========================================================================
+- name: AIOPS — Collect host context
+  hosts: "{{ target_host | default('all') }}"
+  gather_facts: true
+
+  tasks:
+    - name: Coletar uso de disco (df -h)
+      ansible.builtin.command: "df -h"
+      register: disk_usage
+      changed_when: false
+
+    - name: Coletar top 10 processos por memória
+      ansible.builtin.command: "ps -eo pid,user,%mem,%cpu,comm --sort=-%mem"
+      register: top_mem
+      changed_when: false
+
+    - name: Coletar uptime e load
+      ansible.builtin.command: "uptime"
+      register: uptime_out
+      changed_when: false
+
+    - name: Coletar memória (free -h)
+      ansible.builtin.command: "free -h"
+      register: free_out
+      changed_when: false
+
+    - name: Coletar últimos eventos do sistema (dmesg)
+      ansible.builtin.command: "dmesg -T --level=err,warn"
+      register: dmesg_out
+      changed_when: false
+      failed_when: false
+
+    - name: Exportar contexto do host para o workflow
+      ansible.builtin.set_stats:
+        aggregate: false
+        data:
+          stats_os: "{{ ansible_distribution }} {{ ansible_distribution_version }}"
+          stats_kernel: "{{ ansible_kernel }}"
+          stats_arch: "{{ ansible_architecture }}"
+          stats_hostname: "{{ ansible_hostname }}"
+          stats_uptime: "{{ uptime_out.stdout | trim }}"
+          stats_disk: "{{ disk_usage.stdout }}"
+          stats_memory: "{{ free_out.stdout }}"
+          stats_top_procs: "{{ top_mem.stdout_lines[0:11] | join('\n') }}"
+          stats_dmesg_errors: "{{ dmesg_out.stdout | default('') | regex_findall('.*') | last(20) | join('\n') if dmesg_out.stdout else '' }}"

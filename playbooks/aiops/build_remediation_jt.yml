@@ -1,0 +1,150 @@
+---
+# =========================================================================
+# Playbook: AIOPS — Build Remediation Job Template (Survey Pre-fill)
+# =========================================================================
+# Atualiza o survey do WF-AIOPS-REMEDIATION com defaults pré-preenchidos
+# vindos do WF-1 (incident_number, prompt sugerido pela IA, host alvo).
+# Quando o humano abrir o launch do WF-2, os campos já vêm populados.
+#
+# Lê (set_stats do WF-1):
+#   sn_incident_number, stats_ai_prompt_suggestion, stats_target_host,
+#   stats_service_name, stats_ai_rca
+#
+# Exporta:
+#   stats_remediation_wf_id - id do WF-2 atualizado
+#
+# Credential (AAP): CRED-AAP-ROQUE (injects CONTROLLER_HOST, CONTROLLER_OAUTH_TOKEN)
+# =========================================================================
+- name: AIOPS — Build remediation JT (update WF-2 survey defaults)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    remediation_wf_name: "{{ remediation_wf_name | default('WF-AIOPS-REMEDIATION') }}"
+    controller_host: "{{ lookup('env', 'CONTROLLER_HOST') | default(lookup('env', 'AAP_HOSTNAME'), true) }}"
+    controller_token: "{{ lookup('env', 'CONTROLLER_OAUTH_TOKEN') | default(lookup('env', 'AAP_TOKEN'), true) }}"
+    controller_verify_ssl: "{{ (lookup('env', 'CONTROLLER_VERIFY_SSL') | default('false', true)) | bool }}"
+    sn_incident_number: "{{ sn_incident_number | default('UNKNOWN') }}"
+    target_host: "{{ stats_target_host | default('') }}"
+    service_name: "{{ stats_service_name | default('') }}"
+    ai_prompt_suggestion: "{{ stats_ai_prompt_suggestion | default('') }}"
+    ai_rca: "{{ stats_ai_rca | default('') }}"
+
+  tasks:
+    - name: Validar credencial AAP
+      ansible.builtin.assert:
+        that:
+          - controller_host | length > 0
+          - controller_token | length > 0
+
+    - name: Buscar id do {{ remediation_wf_name }}
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/workflow_job_templates/?name={{ remediation_wf_name | urlencode }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        return_content: true
+      register: wf_lookup
+
+    - name: Confirmar que o workflow existe
+      ansible.builtin.assert:
+        that:
+          - wf_lookup.json.count == 1
+        fail_msg: "Workflow '{{ remediation_wf_name }}' não encontrado no AAP."
+
+    - name: Definir id do workflow
+      ansible.builtin.set_fact:
+        remediation_wf_id: "{{ wf_lookup.json.results[0].id }}"
+
+    - name: Montar survey_spec com defaults vindos da IA
+      ansible.builtin.set_fact:
+        new_survey_spec:
+          name: "Remediação AIOps — revise antes de lançar"
+          description: "Survey populada automaticamente pelo WF-AIOPS-ENRICHMENT"
+          spec:
+            - question_name: "Incidente ServiceNow"
+              question_description: "Número do incidente que originou esta remediação"
+              required: true
+              type: "text"
+              variable: "sn_incident_number"
+              default: "{{ sn_incident_number }}"
+              min: 0
+              max: 64
+            - question_name: "Host alvo"
+              question_description: "Host onde a remediação será aplicada"
+              required: true
+              type: "text"
+              variable: "target_host"
+              default: "{{ target_host }}"
+              min: 0
+              max: 255
+            - question_name: "Serviço afetado"
+              question_description: "Nome do serviço (ex.: httpd, nginx)"
+              required: false
+              type: "text"
+              variable: "service_name"
+              default: "{{ service_name }}"
+              min: 0
+              max: 64
+            - question_name: "Prompt manual (editável)"
+              question_description: "Prompt que será enviado para a IA gerar o playbook. Edite antes de lançar se desejar."
+              required: true
+              type: "textarea"
+              variable: "prompt_manual"
+              default: "{{ ai_prompt_suggestion }}"
+              min: 0
+              max: 8000
+            - question_name: "Sugestão da IA (apenas leitura)"
+              question_description: "Prompt sugerido pela IA do WF-1 — não editar, é referência."
+              required: false
+              type: "textarea"
+              variable: "prompt_ai_suggestion"
+              default: "{{ ai_prompt_suggestion }}"
+              min: 0
+              max: 8000
+            - question_name: "RCA (apenas leitura)"
+              question_description: "Root Cause Analysis gerado pela IA"
+              required: false
+              type: "textarea"
+              variable: "rca_context"
+              default: "{{ ai_rca }}"
+              min: 0
+              max: 8000
+
+    - name: Publicar nova survey_spec no WF-2
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/workflow_job_templates/{{ remediation_wf_id }}/survey_spec/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body: "{{ new_survey_spec }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: [200, 201]
+        return_content: true
+
+    - name: Habilitar survey no WF-2 (idempotente)
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/workflow_job_templates/{{ remediation_wf_id }}/"
+        method: PATCH
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          survey_enabled: true
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: 200
+
+    - name: Exibir resultado
+      ansible.builtin.debug:
+        msg: "Survey do {{ remediation_wf_name }} (id={{ remediation_wf_id }}) atualizada. Incidente={{ sn_incident_number }}."
+
+    - name: Exportar id do workflow de remediação
+      ansible.builtin.set_stats:
+        aggregate: false
+        data:
+          stats_remediation_wf_id: "{{ remediation_wf_id }}"
+          stats_remediation_wf_name: "{{ remediation_wf_name }}"

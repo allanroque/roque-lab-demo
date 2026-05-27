@@ -1,0 +1,9 @@
+{
+  "model": "{{ ai_model }}",
+  "temperature": {{ ai_temperature | default(0.2) }},
+  "max_tokens": {{ ai_max_tokens | default(2048) }},
+  "messages": [
+    {"role": "system", "content": {{ ai_system_prompt | to_json }}},
+    {"role": "user", "content": {{ ai_user_prompt | to_json }}}
+  ]
+}

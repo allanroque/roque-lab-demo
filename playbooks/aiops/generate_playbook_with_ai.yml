@@ -1,0 +1,122 @@
+---
+# =========================================================================
+# Playbook: AIOPS — Generate Remediation Playbook with AI
+# =========================================================================
+# Usa o LiteLLM (modelo deepseek-r1 por default) para gerar um playbook
+# Ansible de remediação a partir do prompt manual editado pelo humano.
+# Limpa tags <think> e code fences do output.
+#
+# Variáveis (Survey WF-2):
+#   prompt_manual         - Prompt revisado pelo humano (obrigatório)
+#   sn_incident_number    - Número do incidente (pra naming)
+#   target_host           - Host alvo (vai dentro do playbook gerado)
+#   service_name          - Nome do serviço
+#
+# Exporta (set_stats):
+#   stats_generated_yaml      - Conteúdo do playbook gerado
+#   stats_playbook_filename   - Nome do arquivo (timestamp + incident)
+#   stats_playbook_path       - Caminho relativo no repo
+#
+# Credential: CRED-LITELLM-ROQUE
+# =========================================================================
+- name: AIOPS — Generate remediation playbook with AI
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ai_model: "{{ ai_generate_model | default('deepseek-r1') }}"
+    ai_temperature: 0.1
+    ai_max_tokens: 4000
+    litellm_host: "{{ lookup('env', 'LITELLM_HOST') }}"
+    litellm_token: "{{ lookup('env', 'LITELLM_TOKEN') }}"
+    prompt_manual: "{{ prompt_manual | default('') }}"
+    sn_incident_number: "{{ sn_incident_number | default('NOINC') }}"
+    target_host: "{{ target_host | default('all') }}"
+    service_name: "{{ service_name | default('') }}"
+
+  tasks:
+    - name: Validar credenciais e prompt
+      ansible.builtin.assert:
+        that:
+          - litellm_host | length > 0
+          - litellm_token | length > 0
+          - prompt_manual | length > 20
+        fail_msg: "LITELLM_HOST, LITELLM_TOKEN e prompt_manual são obrigatórios."
+
+    - name: Montar system prompt de geração
+      ansible.builtin.set_fact:
+        ai_system_prompt: "{{ lookup('template', 'playbook_system_prompt.j2') }}"
+
+    - name: Montar user prompt com contexto
+      ansible.builtin.set_fact:
+        ai_user_prompt: |
+          Generate an Ansible playbook to remediate the following issue.
+          Target host (use as hosts:): "{{ target_host }}"
+          Service involved: "{{ service_name }}"
+          Incident: {{ sn_incident_number }}
+
+          Remediation requirement:
+          {{ prompt_manual }}
+
+    - name: Renderizar payload
+      ansible.builtin.set_fact:
+        ai_payload: "{{ lookup('template', 'ai_payload.json.j2') | from_json }}"
+
+    - name: Chamar LiteLLM (chat completions)
+      ansible.builtin.uri:
+        url: "{{ litellm_host }}/v1/chat/completions"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ litellm_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body: "{{ ai_payload }}"
+        return_content: true
+        status_code: 200
+        timeout: 180
+      register: ai_response
+
+    - name: Extrair conteúdo bruto
+      ansible.builtin.set_fact:
+        ai_raw: "{{ ai_response.json.choices[0].message.content }}"
+
+    - name: Remover blocos <think>...</think> (deepseek-r1)
+      ansible.builtin.set_fact:
+        ai_no_think: "{{ ai_raw | regex_replace('(?s)<think>.*?</think>', '') | trim }}"
+
+    - name: Remover code fences ```yaml / ``` da resposta
+      ansible.builtin.set_fact:
+        ai_clean: "{{ ai_no_think | regex_replace('^```(?:yaml|yml)?\\s*', '') | regex_replace('\\s*```\\s*$', '') | trim }}"
+
+    - name: Garantir que começa com ---
+      ansible.builtin.set_fact:
+        ai_final_yaml: "{{ ('---\n' + ai_clean) if not (ai_clean is match('^---')) else ai_clean }}"
+
+    - name: Validar que parece YAML válido
+      ansible.builtin.assert:
+        that:
+          - ai_final_yaml is search('^- name:')
+          - ai_final_yaml is search('hosts:')
+          - ai_final_yaml is not search('ansible.builtin.shell')
+          - ai_final_yaml is not search('ansible.builtin.raw')
+        fail_msg: "Playbook gerado pela IA parece inválido. Conteúdo: {{ ai_final_yaml }}"
+
+    - name: Definir nome do arquivo
+      ansible.builtin.set_fact:
+        playbook_filename: "{{ ansible_date_time.iso8601_basic_short | default(lookup('pipe', 'date -u +%Y%m%dT%H%M%S')) }}_{{ sn_incident_number }}.yml"
+
+    - name: Calcular caminho relativo
+      ansible.builtin.set_fact:
+        playbook_relpath: "playbooks/ai-generated/{{ playbook_filename }}"
+
+    - name: Exibir preview do playbook gerado
+      ansible.builtin.debug:
+        msg: "{{ ai_final_yaml.split('\n')[0:30] }}"
+
+    - name: Exportar playbook gerado para o workflow
+      ansible.builtin.set_stats:
+        aggregate: false
+        data:
+          stats_generated_yaml: "{{ ai_final_yaml }}"
+          stats_playbook_filename: "{{ playbook_filename }}"
+          stats_playbook_path: "{{ playbook_relpath }}"

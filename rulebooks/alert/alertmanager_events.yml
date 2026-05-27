@@ -24,6 +24,20 @@
             alerta: "{{ event.alert.labels.alertname }}"
             hostname: "{{ event.alert.labels.instance }}"
 
+    - name: "AIOps Fallback — AppDown (sem automação prévia)"
+      condition: event.alert.labels.alertname == "AppDown" and event.alert.status == "firing"
+      action:
+        run_workflow_template:
+          name: "WF-AIOPS-ENRICHMENT"
+          organization: "ROQUE"
+          job_args:
+            limit: "{{ event.meta.hosts }}"
+          extra_vars:
+            alertname: "{{ event.alert.labels.alertname }}"
+            target_host: "{{ event.alert.labels.instance }}"
+            service_name: "{{ event.alert.labels.service | default('httpd') }}"
+            alert_summary: "{{ event.alert.annotations.summary | default('AppDown firing') }}"
+
     - name: "Print de qualquer alerta recebido do Alertmanager"
       condition: event.alert is defined
       action:

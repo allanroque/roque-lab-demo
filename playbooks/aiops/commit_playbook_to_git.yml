@@ -1,0 +1,142 @@
+---
+# =========================================================================
+# Playbook: AIOPS — Commit Generated Playbook to Git
+# =========================================================================
+# Clona o repo, escreve o playbook gerado pela IA em playbooks/ai-generated/,
+# commita e dá push na branch main.
+#
+# Variáveis (set_stats do WF-2):
+#   stats_generated_yaml      - YAML do playbook
+#   stats_playbook_filename   - nome do arquivo
+#   stats_playbook_path       - caminho relativo
+#   sn_incident_number        - incidente (vai na msg do commit)
+#
+# Exporta:
+#   stats_commit_sha
+#   stats_playbook_path
+#
+# Credential: CRED-GIT-ROQUE-PUSH (injects GITHUB_USER, GITHUB_TOKEN, GITHUB_REPO_URL)
+# =========================================================================
+- name: AIOPS — Commit AI-generated playbook to Git
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    repo_workdir: "/tmp/aiops-repo-{{ sn_incident_number | default('NOINC') }}-{{ ansible_date_time.epoch }}"
+    repo_url_raw: "{{ lookup('env', 'GITHUB_REPO_URL') | default('https://github.com/allanroque/roque-lab-demo.git', true) }}"
+    git_user: "{{ lookup('env', 'GITHUB_USER') }}"
+    git_token: "{{ lookup('env', 'GITHUB_TOKEN') }}"
+    git_branch: "{{ git_branch | default('main') }}"
+    commit_author_name: "{{ git_commit_author_name | default('AIOps Bot') }}"
+    commit_author_email: "{{ git_commit_author_email | default('aiops-bot@roque.local') }}"
+    sn_incident_number: "{{ sn_incident_number | default('NOINC') }}"
+    stats_generated_yaml: "{{ stats_generated_yaml | default('') }}"
+    stats_playbook_filename: "{{ stats_playbook_filename | default('') }}"
+    stats_playbook_path: "{{ stats_playbook_path | default('') }}"
+
+  tasks:
+    - name: Validar pré-condições
+      ansible.builtin.assert:
+        that:
+          - git_user | length > 0
+          - git_token | length > 0
+          - stats_generated_yaml | length > 50
+          - stats_playbook_filename | length > 0
+          - stats_playbook_path | length > 0
+        fail_msg: "Credenciais Git ou conteúdo do playbook ausentes."
+
+    - name: Montar URL autenticada para o push
+      ansible.builtin.set_fact:
+        repo_authed_url: "{{ repo_url_raw | regex_replace('^https://', 'https://' + git_user + ':' + git_token + '@') }}"
+      no_log: true
+
+    - name: Clonar repositório (branch {{ git_branch }})
+      ansible.builtin.git:
+        repo: "{{ repo_authed_url }}"
+        dest: "{{ repo_workdir }}"
+        version: "{{ git_branch }}"
+        force: true
+      no_log: true
+
+    - name: Garantir que diretório ai-generated existe
+      ansible.builtin.file:
+        path: "{{ repo_workdir }}/playbooks/ai-generated"
+        state: directory
+        mode: "0755"
+
+    - name: Escrever playbook gerado pela IA
+      ansible.builtin.copy:
+        content: "{{ stats_generated_yaml }}"
+        dest: "{{ repo_workdir }}/{{ stats_playbook_path }}"
+        mode: "0644"
+
+    - name: Configurar identidade do commit
+      ansible.builtin.command:
+        chdir: "{{ repo_workdir }}"
+        argv:
+          - git
+          - config
+          - "{{ item.k }}"
+          - "{{ item.v }}"
+      loop:
+        - { k: "user.name",  v: "{{ commit_author_name }}" }
+        - { k: "user.email", v: "{{ commit_author_email }}" }
+      changed_when: false
+
+    - name: git add
+      ansible.builtin.command:
+        chdir: "{{ repo_workdir }}"
+        argv:
+          - git
+          - add
+          - "{{ stats_playbook_path }}"
+      changed_when: true
+
+    - name: git commit
+      ansible.builtin.command:
+        chdir: "{{ repo_workdir }}"
+        argv:
+          - git
+          - commit
+          - "-m"
+          - "feat(aiops): playbook gerado pela IA para {{ sn_incident_number }}"
+      register: git_commit_out
+      changed_when: "'nothing to commit' not in (git_commit_out.stdout | default('')) + (git_commit_out.stderr | default(''))"
+      failed_when:
+        - git_commit_out.rc != 0
+        - "'nothing to commit' not in (git_commit_out.stdout | default('')) + (git_commit_out.stderr | default(''))"
+
+    - name: git push
+      ansible.builtin.command:
+        chdir: "{{ repo_workdir }}"
+        argv:
+          - git
+          - push
+          - origin
+          - "{{ git_branch }}"
+      register: git_push_out
+      changed_when: true
+      no_log: true
+
+    - name: Capturar SHA do commit
+      ansible.builtin.command:
+        chdir: "{{ repo_workdir }}"
+        argv:
+          - git
+          - rev-parse
+          - HEAD
+      register: git_sha
+      changed_when: false
+
+    - name: Limpar working dir
+      ansible.builtin.file:
+        path: "{{ repo_workdir }}"
+        state: absent
+
+    - name: Exportar resultado do commit
+      ansible.builtin.set_stats:
+        aggregate: false
+        data:
+          stats_commit_sha: "{{ git_sha.stdout | trim }}"
+          stats_playbook_path: "{{ stats_playbook_path }}"
+          stats_playbook_filename: "{{ stats_playbook_filename }}"

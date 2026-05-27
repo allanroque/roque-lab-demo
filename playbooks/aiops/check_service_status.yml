@@ -1,0 +1,57 @@
+---
+# =========================================================================
+# Playbook: AIOPS — Check Service Status
+# =========================================================================
+# Coleta status e logs recentes de um serviço no host alvo.
+# Exporta via set_stats para os próximos nós do workflow.
+#
+# Variáveis (Survey AAP):
+#   target_host    - Host alvo do diagnóstico (limit)
+#   service_name   - Nome do serviço (ex.: httpd, nginx, mysqld)
+# =========================================================================
+- name: AIOPS — Check service status
+  hosts: "{{ target_host | default('all') }}"
+  gather_facts: false
+  vars:
+    service_name: "{{ service_name | default('httpd') }}"
+
+  tasks:
+    - name: Coletar status do serviço {{ service_name }}
+      ansible.builtin.command: "systemctl is-active {{ service_name }}"
+      register: svc_active
+      changed_when: false
+      failed_when: false
+
+    - name: Coletar status detalhado (systemctl status)
+      ansible.builtin.command: "systemctl status {{ service_name }} --no-pager -l"
+      register: svc_status
+      changed_when: false
+      failed_when: false
+
+    - name: Coletar logs recentes (journalctl)
+      ansible.builtin.command: "journalctl -u {{ service_name }} -n 50 --no-pager"
+      register: svc_logs
+      changed_when: false
+      failed_when: false
+
+    - name: Determinar se serviço está falhando
+      ansible.builtin.set_fact:
+        service_failed: "{{ svc_active.stdout | trim != 'active' }}"
+
+    - name: Exibir resumo
+      ansible.builtin.debug:
+        msg:
+          - "Serviço: {{ service_name }}"
+          - "Estado: {{ svc_active.stdout | trim }}"
+          - "Falhando: {{ service_failed }}"
+
+    - name: Exportar contexto do serviço para o workflow
+      ansible.builtin.set_stats:
+        aggregate: false
+        data:
+          stats_service_name: "{{ service_name }}"
+          stats_service_failed: "{{ service_failed }}"
+          stats_service_state: "{{ svc_active.stdout | trim }}"
+          stats_service_status: "{{ svc_status.stdout }}"
+          stats_service_logs: "{{ svc_logs.stdout }}"
+          stats_target_host: "{{ inventory_hostname }}"

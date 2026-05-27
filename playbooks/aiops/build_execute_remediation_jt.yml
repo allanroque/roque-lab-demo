@@ -1,0 +1,198 @@
+---
+# =========================================================================
+# Playbook: AIOPS — Build + Execute Dynamic Remediation Job Template
+# =========================================================================
+# 1) Força um project_update (sync) para o AAP pegar o playbook recém commitado.
+# 2) Aguarda o project_update terminar.
+# 3) Cria um JT temporário apontando para playbooks/ai-generated/<filename>.
+# 4) Lança o JT (auto-execute) e aguarda a conclusão.
+# 5) Atualiza work_notes no ServiceNow com resultado.
+#
+# Lê (set_stats):
+#   stats_playbook_path        - caminho do playbook gerado
+#   stats_playbook_filename    - nome (usado no nome do JT)
+#   sn_incident_number, target_host, service_name
+#
+# Exporta:
+#   stats_execute_jt_id, stats_execute_job_id, stats_execute_status
+#
+# Credentials: CRED-AAP-ROQUE (controller token)
+# =========================================================================
+- name: AIOPS — Build + Execute dynamic remediation JT
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    controller_host: "{{ lookup('env', 'CONTROLLER_HOST') | default(lookup('env', 'AAP_HOSTNAME'), true) }}"
+    controller_token: "{{ lookup('env', 'CONTROLLER_OAUTH_TOKEN') | default(lookup('env', 'AAP_TOKEN'), true) }}"
+    controller_verify_ssl: "{{ (lookup('env', 'CONTROLLER_VERIFY_SSL') | default('false', true)) | bool }}"
+    project_id: "{{ aiops_project_id | default(278) | int }}"
+    inventory_id: "{{ aiops_inventory_id | default(26) | int }}"
+    organization_id: "{{ aiops_org_id | default(15) | int }}"
+    execution_environment_id: "{{ aiops_ee_id | default(13) | int }}"
+    ssh_credential_id: "{{ aiops_ssh_credential_id | default(34) | int }}"
+    stats_playbook_path: "{{ stats_playbook_path | default('') }}"
+    stats_playbook_filename: "{{ stats_playbook_filename | default('') }}"
+    sn_incident_number: "{{ sn_incident_number | default('NOINC') }}"
+    target_host: "{{ target_host | default('all') }}"
+    service_name: "{{ service_name | default('') }}"
+    jt_name: "AIOPS-DYN-{{ sn_incident_number }}"
+
+  tasks:
+    - name: Validar pré-condições
+      ansible.builtin.assert:
+        that:
+          - controller_host | length > 0
+          - controller_token | length > 0
+          - stats_playbook_path | length > 0
+
+    - name: Disparar project_update
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/projects/{{ project_id }}/update/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: [201, 202]
+        return_content: true
+      register: project_update_start
+
+    - name: Capturar id do project_update
+      ansible.builtin.set_fact:
+        project_update_id: "{{ project_update_start.json.id }}"
+
+    - name: Aguardar conclusão do project_update
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/project_updates/{{ project_update_id }}/"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        return_content: true
+      register: pu_check
+      until: pu_check.json.status in ['successful', 'failed', 'error', 'canceled']
+      retries: 60
+      delay: 5
+
+    - name: Falhar se project_update não foi bem-sucedido
+      ansible.builtin.assert:
+        that:
+          - pu_check.json.status == 'successful'
+        fail_msg: "Project update terminou em '{{ pu_check.json.status }}'."
+
+    - name: Criar JT dinâmico {{ jt_name }}
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/job_templates/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          name: "{{ jt_name }}"
+          description: "JT temporário gerado pelo WF-AIOPS-REMEDIATION para incidente {{ sn_incident_number }}"
+          job_type: "run"
+          inventory: "{{ inventory_id }}"
+          project: "{{ project_id }}"
+          playbook: "{{ stats_playbook_path }}"
+          execution_environment: "{{ execution_environment_id }}"
+          organization: "{{ organization_id }}"
+          limit: "{{ target_host }}"
+          verbosity: 1
+          ask_limit_on_launch: false
+          ask_variables_on_launch: true
+          extra_vars: |
+            target_host: "{{ target_host }}"
+            service_name: "{{ service_name }}"
+            sn_incident_number: "{{ sn_incident_number }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: [201, 200, 400]
+        return_content: true
+      register: jt_create
+
+    - name: Lidar com JT já existente (mesmo nome)
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/job_templates/?name={{ jt_name | urlencode }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        return_content: true
+      register: jt_lookup
+      when: jt_create.status == 400
+
+    - name: Definir id do JT dinâmico
+      ansible.builtin.set_fact:
+        dynamic_jt_id: "{{ jt_create.json.id if jt_create.status in [200, 201] else jt_lookup.json.results[0].id }}"
+
+    - name: Anexar credential SSH ao JT
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/job_templates/{{ dynamic_jt_id }}/credentials/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          id: "{{ ssh_credential_id }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: [200, 201, 204, 400]
+
+    - name: Lançar JT dinâmico
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/job_templates/{{ dynamic_jt_id }}/launch/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          extra_vars:
+            target_host: "{{ target_host }}"
+            service_name: "{{ service_name }}"
+            sn_incident_number: "{{ sn_incident_number }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: [201, 202]
+        return_content: true
+      register: jt_launch
+
+    - name: Capturar id do job lançado
+      ansible.builtin.set_fact:
+        dynamic_job_id: "{{ jt_launch.json.id }}"
+
+    - name: Aguardar conclusão do job de remediação
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/jobs/{{ dynamic_job_id }}/"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        return_content: true
+      register: job_check
+      until: job_check.json.status in ['successful', 'failed', 'error', 'canceled']
+      retries: 120
+      delay: 5
+
+    - name: Exibir resultado da execução
+      ansible.builtin.debug:
+        msg:
+          - "JT id: {{ dynamic_jt_id }}"
+          - "Job id: {{ dynamic_job_id }}"
+          - "Status: {{ job_check.json.status }}"
+          - "Elapsed: {{ job_check.json.elapsed }}s"
+
+    - name: Exportar resultado para o workflow
+      ansible.builtin.set_stats:
+        aggregate: false
+        data:
+          stats_execute_jt_id: "{{ dynamic_jt_id }}"
+          stats_execute_jt_name: "{{ jt_name }}"
+          stats_execute_job_id: "{{ dynamic_job_id }}"
+          stats_execute_status: "{{ job_check.json.status }}"
+          stats_execute_elapsed: "{{ job_check.json.elapsed }}"
+
+    - name: Falhar workflow se remediação não foi bem-sucedida
+      ansible.builtin.assert:
+        that:
+          - job_check.json.status == 'successful'
+        fail_msg: "Remediação terminou em '{{ job_check.json.status }}' — incidente NÃO será fechado."

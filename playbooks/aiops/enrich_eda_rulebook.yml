@@ -1,0 +1,231 @@
+---
+# =========================================================================
+# Playbook: AIOPS — Enrich EDA Rulebook (phased auto-learning)
+# =========================================================================
+# Após o WF-2 confirmar que o playbook gerado funciona, este job:
+#   1) Adiciona uma nova regra em rulebooks/alert/alertmanager_events.yml
+#      mapeando o mesmo alertname para o JT recém-criado, contornando a
+#      próxima passagem pela IA.
+#   2) Commit + push na main.
+#   3) Força sync do Project (Controller) e do EDA Project.
+#   4) Desativa + reativa o Activation no EDA para recarregar o rulebook.
+#
+# Variáveis (set_stats / vars do WF-2):
+#   stats_execute_jt_name      - Nome do JT dinâmico criado
+#   alertname                  - alertname do Alertmanager (ex.: AppDown)
+#   service_name               - serviço alvo
+#   sn_incident_number         - para mensagem de commit
+#   eda_activation_id          - id do Activation a recarregar (opcional)
+#
+# Credentials: CRED-AAP-ROQUE, CRED-GIT-ROQUE-PUSH
+# =========================================================================
+- name: AIOPS — Enrich EDA Rulebook
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    repo_workdir: "/tmp/aiops-eda-{{ sn_incident_number | default('NOINC') }}-{{ ansible_date_time.epoch }}"
+    repo_url_raw: "{{ lookup('env', 'GITHUB_REPO_URL') | default('https://github.com/allanroque/roque-lab-demo.git', true) }}"
+    git_user: "{{ lookup('env', 'GITHUB_USER') }}"
+    git_token: "{{ lookup('env', 'GITHUB_TOKEN') }}"
+    git_branch: "{{ git_branch | default('main') }}"
+    commit_author_name: "{{ git_commit_author_name | default('AIOps Bot') }}"
+    commit_author_email: "{{ git_commit_author_email | default('aiops-bot@roque.local') }}"
+    controller_host: "{{ lookup('env', 'CONTROLLER_HOST') | default(lookup('env', 'AAP_HOSTNAME'), true) }}"
+    controller_token: "{{ lookup('env', 'CONTROLLER_OAUTH_TOKEN') | default(lookup('env', 'AAP_TOKEN'), true) }}"
+    controller_verify_ssl: "{{ (lookup('env', 'CONTROLLER_VERIFY_SSL') | default('false', true)) | bool }}"
+    controller_project_id: "{{ aiops_project_id | default(278) | int }}"
+    eda_project_id: "{{ eda_project_id | default(0) | int }}"
+    eda_activation_id: "{{ eda_activation_id | default(0) | int }}"
+    rulebook_path: "rulebooks/alert/alertmanager_events.yml"
+    alertname: "{{ alertname | default('') }}"
+    service_name: "{{ service_name | default('') }}"
+    sn_incident_number: "{{ sn_incident_number | default('NOINC') }}"
+    stats_execute_jt_name: "{{ stats_execute_jt_name | default('') }}"
+
+  tasks:
+    - name: Validar pré-condições
+      ansible.builtin.assert:
+        that:
+          - git_user | length > 0
+          - git_token | length > 0
+          - alertname | length > 0
+          - stats_execute_jt_name | length > 0
+        fail_msg: "alertname, JT name e credenciais Git são obrigatórios."
+
+    - name: Montar URL autenticada
+      ansible.builtin.set_fact:
+        repo_authed_url: "{{ repo_url_raw | regex_replace('^https://', 'https://' + git_user + ':' + git_token + '@') }}"
+      no_log: true
+
+    - name: Clonar repositório
+      ansible.builtin.git:
+        repo: "{{ repo_authed_url }}"
+        dest: "{{ repo_workdir }}"
+        version: "{{ git_branch }}"
+        force: true
+      no_log: true
+
+    - name: Adicionar nova regra no rulebook (idempotente, com marker por alertname)
+      ansible.builtin.blockinfile:
+        path: "{{ repo_workdir }}/{{ rulebook_path }}"
+        marker: "    # {mark} AIOPS AUTO-LEARN: {{ alertname }}"
+        insertbefore: '^    - name: "Print de qualquer alerta recebido do Alertmanager"'
+        block: |2
+              - name: "AUTO-LEARN — {{ alertname }} → {{ stats_execute_jt_name }}"
+                condition: event.alert.labels.alertname == "{{ alertname }}" and event.alert.status == "firing"
+                action:
+                  run_job_template:
+                    name: "{{ stats_execute_jt_name }}"
+                    organization: "ROQUE"
+                    job_args:
+                      limit: "{{ '{{' }} event.meta.hosts {{ '}}' }}"
+                    extra_vars:
+                      target_host: "{{ '{{' }} event.alert.labels.instance {{ '}}' }}"
+                      service_name: "{{ service_name }}"
+                      alertname: "{{ alertname }}"
+
+    - name: Configurar identidade do commit
+      ansible.builtin.command:
+        chdir: "{{ repo_workdir }}"
+        argv:
+          - git
+          - config
+          - "{{ item.k }}"
+          - "{{ item.v }}"
+      loop:
+        - { k: "user.name",  v: "{{ commit_author_name }}" }
+        - { k: "user.email", v: "{{ commit_author_email }}" }
+      changed_when: false
+
+    - name: git add
+      ansible.builtin.command:
+        chdir: "{{ repo_workdir }}"
+        argv:
+          - git
+          - add
+          - "{{ rulebook_path }}"
+      changed_when: true
+
+    - name: git commit
+      ansible.builtin.command:
+        chdir: "{{ repo_workdir }}"
+        argv:
+          - git
+          - commit
+          - "-m"
+          - "feat(eda): auto-learn rule {{ alertname }} → {{ stats_execute_jt_name }} ({{ sn_incident_number }})"
+      register: git_commit_out
+      changed_when: "'nothing to commit' not in (git_commit_out.stdout | default('')) + (git_commit_out.stderr | default(''))"
+      failed_when:
+        - git_commit_out.rc != 0
+        - "'nothing to commit' not in (git_commit_out.stdout | default('')) + (git_commit_out.stderr | default(''))"
+
+    - name: git push
+      ansible.builtin.command:
+        chdir: "{{ repo_workdir }}"
+        argv:
+          - git
+          - push
+          - origin
+          - "{{ git_branch }}"
+      changed_when: true
+      no_log: true
+
+    - name: Capturar SHA
+      ansible.builtin.command:
+        chdir: "{{ repo_workdir }}"
+        argv:
+          - git
+          - rev-parse
+          - HEAD
+      register: git_sha
+      changed_when: false
+
+    - name: Limpar working dir
+      ansible.builtin.file:
+        path: "{{ repo_workdir }}"
+        state: absent
+
+    - name: Disparar project_update no Controller (PROJ-GIT-ROQUE-LAB)
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/projects/{{ controller_project_id }}/update/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: [201, 202]
+        return_content: true
+      register: ctl_pu_start
+
+    - name: Aguardar project_update do Controller terminar
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/project_updates/{{ ctl_pu_start.json.id }}/"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        return_content: true
+      register: ctl_pu_check
+      until: ctl_pu_check.json.status in ['successful', 'failed', 'error', 'canceled']
+      retries: 60
+      delay: 5
+
+    - name: Sincronizar EDA Project (se id fornecido)
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/eda/v1/projects/{{ eda_project_id }}/sync/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: [200, 201, 202]
+      when: eda_project_id | int > 0
+      register: eda_sync_out
+
+    - name: Aguardar sync do EDA Project
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/eda/v1/projects/{{ eda_project_id }}/"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        return_content: true
+      register: eda_project_check
+      until: eda_project_check.json.import_state in ['completed', 'failed']
+      retries: 60
+      delay: 5
+      when: eda_project_id | int > 0
+
+    - name: Desabilitar Activation no EDA (para recarregar rulebook)
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/eda/v1/activations/{{ eda_activation_id }}/disable/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: [200, 204]
+      when: eda_activation_id | int > 0
+
+    - name: Pequena pausa para o EDA processar disable
+      ansible.builtin.pause:
+        seconds: 5
+      when: eda_activation_id | int > 0
+
+    - name: Habilitar Activation novamente
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/eda/v1/activations/{{ eda_activation_id }}/enable/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: [200, 204]
+      when: eda_activation_id | int > 0
+
+    - name: Exportar resultado do enrichment
+      ansible.builtin.set_stats:
+        aggregate: false
+        data:
+          stats_eda_commit_sha: "{{ git_sha.stdout | trim }}"
+          stats_eda_rule_added: "{{ alertname }}"
+          stats_eda_target_jt: "{{ stats_execute_jt_name }}"
+          stats_eda_activation_reloaded: "{{ eda_activation_id | int > 0 }}"

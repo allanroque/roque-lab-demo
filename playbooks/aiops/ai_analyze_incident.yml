@@ -1,0 +1,152 @@
+---
+# =========================================================================
+# Playbook: AIOPS — AI Analyze Incident (RCA)
+# =========================================================================
+# Chama o LiteLLM (modelo Granite) com o contexto coletado e gera RCA
+# estruturado + campos para criação do incidente no ServiceNow + sugestão
+# de prompt para a IA de geração de playbook (WF-2).
+#
+# Lê (set_stats do WF-1):
+#   stats_service_name, stats_service_failed, stats_service_state,
+#   stats_service_status, stats_service_logs, stats_target_host,
+#   stats_os, stats_kernel, stats_disk, stats_memory, stats_top_procs,
+#   stats_dmesg_errors, alert_summary
+#
+# Exporta (set_stats — usados pelo SNOW-CREATE e pelo BUILD-REMEDIATION-JT):
+#   stats_ai_rca, stats_ai_prompt_suggestion,
+#   sn_short_description, sn_description, sn_impact, sn_urgency
+#
+# Credential (AAP): CRED-LITELLM-ROQUE (injects LITELLM_HOST, LITELLM_TOKEN)
+# =========================================================================
+- name: AIOPS — AI Root Cause Analysis
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ai_model: "{{ ai_analyze_model | default('granite-3-8b-instruct') }}"
+    ai_temperature: 0.2
+    ai_max_tokens: 1500
+    litellm_host: "{{ lookup('env', 'LITELLM_HOST') }}"
+    litellm_token: "{{ lookup('env', 'LITELLM_TOKEN') }}"
+    target_host: "{{ stats_target_host | default(target_host | default('unknown')) }}"
+    service_name: "{{ stats_service_name | default(service_name | default('unknown')) }}"
+    alert_summary: "{{ alert_summary | default('No upstream alert summary provided') }}"
+
+  tasks:
+    - name: Validar credenciais LiteLLM
+      ansible.builtin.assert:
+        that:
+          - litellm_host | length > 0
+          - litellm_token | length > 0
+        fail_msg: "LITELLM_HOST e LITELLM_TOKEN devem ser injetados via credential."
+
+    - name: Montar system prompt de RCA
+      ansible.builtin.set_fact:
+        ai_system_prompt: "{{ lookup('template', 'rca_system_prompt.j2') }}"
+
+    - name: Montar user prompt com contexto do incidente
+      ansible.builtin.set_fact:
+        ai_user_prompt: |
+          Alert summary: {{ alert_summary }}
+          Target host: {{ target_host }}
+          Service: {{ service_name }}
+          Service state: {{ stats_service_state | default('unknown') }}
+          Service failing: {{ stats_service_failed | default('unknown') }}
+
+          OS: {{ stats_os | default('unknown') }}
+          Kernel: {{ stats_kernel | default('unknown') }}
+          Uptime: {{ stats_uptime | default('unknown') }}
+
+          === systemctl status ===
+          {{ stats_service_status | default('(not collected)') }}
+
+          === Last 50 journal lines ===
+          {{ stats_service_logs | default('(not collected)') }}
+
+          === Disk usage ===
+          {{ stats_disk | default('(not collected)') }}
+
+          === Memory ===
+          {{ stats_memory | default('(not collected)') }}
+
+          === Top processes (by memory) ===
+          {{ stats_top_procs | default('(not collected)') }}
+
+          === Recent dmesg warnings/errors ===
+          {{ stats_dmesg_errors | default('(none)') }}
+
+    - name: Renderizar payload da requisição
+      ansible.builtin.set_fact:
+        ai_payload: "{{ lookup('template', 'ai_payload.json.j2') | from_json }}"
+
+    - name: Chamar LiteLLM (chat completions)
+      ansible.builtin.uri:
+        url: "{{ litellm_host }}/v1/chat/completions"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ litellm_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body: "{{ ai_payload }}"
+        return_content: true
+        status_code: 200
+        timeout: 120
+      register: ai_response
+      no_log: false
+
+    - name: Extrair conteúdo da resposta
+      ansible.builtin.set_fact:
+        ai_raw_content: "{{ ai_response.json.choices[0].message.content }}"
+
+    - name: Limpar eventual code fence da resposta
+      ansible.builtin.set_fact:
+        ai_clean_content: "{{ ai_raw_content | regex_replace('^```(?:json)?\\s*', '') | regex_replace('\\s*```\\s*$', '') | trim }}"
+
+    - name: Decodificar JSON da IA
+      ansible.builtin.set_fact:
+        ai_parsed: "{{ ai_clean_content | from_json }}"
+
+    - name: Validar campos esperados
+      ansible.builtin.assert:
+        that:
+          - ai_parsed.rca is defined
+          - ai_parsed.short_description is defined
+          - ai_parsed.description is defined
+          - ai_parsed.impact in ['low', 'medium', 'high']
+          - ai_parsed.urgency in ['low', 'medium', 'high']
+          - ai_parsed.prompt_suggestion is defined
+        fail_msg: "A IA retornou JSON em formato inesperado: {{ ai_clean_content }}"
+
+    - name: Exibir RCA resumido
+      ansible.builtin.debug:
+        msg:
+          - "RCA: {{ ai_parsed.rca }}"
+          - "Impacto: {{ ai_parsed.impact }} / Urgência: {{ ai_parsed.urgency }}"
+          - "Sugestão de prompt: {{ ai_parsed.prompt_suggestion }}"
+
+    - name: Exportar análise da IA + campos para o ServiceNow
+      ansible.builtin.set_stats:
+        aggregate: false
+        data:
+          stats_ai_rca: "{{ ai_parsed.rca }}"
+          stats_ai_prompt_suggestion: "{{ ai_parsed.prompt_suggestion }}"
+          stats_ai_model_used: "{{ ai_model }}"
+          sn_short_description: "{{ ai_parsed.short_description }}"
+          sn_description: |
+            [AI-Generated RCA]
+            {{ ai_parsed.rca }}
+
+            ----- Contexto -----
+            Host: {{ target_host }}
+            Serviço: {{ service_name }}
+            Estado: {{ stats_service_state | default('unknown') }}
+            OS: {{ stats_os | default('unknown') }}
+            Alert summary: {{ alert_summary }}
+
+            ----- Detalhes -----
+            {{ ai_parsed.description }}
+
+            ----- Sugestão de remediação (revisar antes de aplicar) -----
+            {{ ai_parsed.prompt_suggestion }}
+          sn_impact: "{{ ai_parsed.impact }}"
+          sn_urgency: "{{ ai_parsed.urgency }}"
