@@ -23,7 +23,7 @@
   connection: local
   gather_facts: false
   vars:
-    ai_model: "{{ ai_analyze_model | default('granite-3-8b-instruct') }}"
+    ai_model: "{{ ai_analyze_model | default('openai/deepseek-r1-distill-qwen-14b') }}"
     ai_temperature: 0.2
     ai_max_tokens: 1500
     litellm_host: "{{ lookup('env', 'LITELLM_HOST') }}"
@@ -110,9 +110,20 @@
       ansible.builtin.set_fact:
         ai_raw_content: "{{ ai_response.json.choices[0].message.content }}"
 
-    - name: Limpar eventual code fence da resposta
+    - name: Remover blocos <think>...</think> (deepseek-r1)
       ansible.builtin.set_fact:
-        ai_clean_content: "{{ ai_raw_content | regex_replace('^```(?:json)?\\s*', '') | regex_replace('\\s*```\\s*$', '') | trim }}"
+        ai_no_think: "{{ ai_raw_content | regex_replace('(?s)<think>.*?</think>', '') | trim }}"
+
+    - name: Limpar code fences da resposta
+      ansible.builtin.set_fact:
+        ai_clean_content: "{{ ai_no_think | regex_replace('^```(?:json)?\\s*', '') | regex_replace('\\s*```\\s*$', '') | trim }}"
+
+    - name: Recortar do primeiro { até o último } (fallback se houver prosa extra)
+      ansible.builtin.set_fact:
+        ai_clean_content: "{{ ai_clean_content[ai_clean_content.find('{') : ai_clean_content.rfind('}') + 1] }}"
+      when:
+        - ai_clean_content.find('{') >= 0
+        - ai_clean_content.rfind('}') > ai_clean_content.find('{')
 
     - name: Decodificar JSON da IA
       ansible.builtin.set_fact:

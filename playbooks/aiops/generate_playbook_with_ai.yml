@@ -24,7 +24,7 @@
   connection: local
   gather_facts: false
   vars:
-    ai_model: "{{ ai_generate_model | default('deepseek-r1') }}"
+    ai_model: "{{ ai_generate_model | default('openai/deepseek-r1-distill-qwen-14b') }}"
     ai_temperature: 0.1
     ai_max_tokens: 4000
     litellm_host: "{{ lookup('env', 'LITELLM_HOST') }}"
