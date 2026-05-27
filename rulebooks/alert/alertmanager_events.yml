@@ -1,15 +1,4 @@
 ---
-# ==============================================================================
-# EDA Rulebook — SELinux Disabled Remediation
-# ==============================================================================
-# Objetivo:
-#   Detectar o alerta SELinuxDisabled vindo do Alertmanager e disparar o
-#   workflow WF-REMEDIATION-SELINUX para reabilitar o SELinux no host afetado.
-#
-# Fluxo:
-#   Prometheus → Alertmanager → EDA :5050/prometheus → WF-REMEDIATION-SELINUX
-# ==============================================================================
-
 - name: SELinux Disabled — remediation
   hosts: localhost
 
@@ -23,7 +12,6 @@
         skip_original_data: true
 
   rules:
-
     - name: "SELinux Disabled - Firing"
       condition: event.alert.labels.alertname == "SELinuxDisabled" and event.alert.status == "firing"
       action:
