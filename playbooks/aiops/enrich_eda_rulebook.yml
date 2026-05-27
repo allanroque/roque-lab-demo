@@ -24,24 +24,24 @@
   connection: local
   gather_facts: true
   vars:
-    repo_workdir: "/tmp/aiops-eda-{{ sn_incident_number | default('NOINC') }}-{{ ansible_date_time.epoch }}"
+    _sn_incident: "{{ sn_incident_number | default('NOINC') }}"
+    _alertname: "{{ alertname | default('') }}"
+    _service_name: "{{ service_name | default('') }}"
+    _stats_jt_name: "{{ stats_execute_jt_name | default('') }}"
+    _eda_project_id: "{{ eda_project_id | default(0) | int }}"
+    _eda_activation_id: "{{ eda_activation_id | default(0) | int }}"
+    repo_workdir: "/tmp/aiops-eda-{{ _sn_incident }}-{{ ansible_date_time.epoch }}"
     repo_url_raw: "{{ lookup('env', 'GITHUB_REPO_URL') | default('https://github.com/allanroque/roque-lab-demo.git', true) }}"
     git_user: "{{ lookup('env', 'GITHUB_USER') }}"
     git_token: "{{ lookup('env', 'GITHUB_TOKEN') }}"
-    git_branch: "{{ git_branch | default('main') }}"
-    commit_author_name: "{{ git_commit_author_name | default('AIOps Bot') }}"
-    commit_author_email: "{{ git_commit_author_email | default('aiops-bot@roque.local') }}"
+    git_branch_target: main
+    commit_author_name: AIOps Bot
+    commit_author_email: aiops-bot@roque.local
     controller_host: "{{ lookup('env', 'CONTROLLER_HOST') | default(lookup('env', 'AAP_HOSTNAME'), true) }}"
     controller_token: "{{ lookup('env', 'CONTROLLER_OAUTH_TOKEN') | default(lookup('env', 'AAP_TOKEN'), true) }}"
     controller_verify_ssl: "{{ (lookup('env', 'CONTROLLER_VERIFY_SSL') | default('false', true)) | bool }}"
     controller_project_id: "{{ aiops_project_id | default(278) | int }}"
-    eda_project_id: "{{ eda_project_id | default(0) | int }}"
-    eda_activation_id: "{{ eda_activation_id | default(0) | int }}"
-    rulebook_path: "rulebooks/alert/alertmanager_events.yml"
-    alertname: "{{ alertname | default('') }}"
-    service_name: "{{ service_name | default('') }}"
-    sn_incident_number: "{{ sn_incident_number | default('NOINC') }}"
-    stats_execute_jt_name: "{{ stats_execute_jt_name | default('') }}"
+    rulebook_path: rulebooks/alert/alertmanager_events.yml
 
   tasks:
     - name: Validar pré-condições
@@ -57,7 +57,7 @@
       ansible.builtin.git:
         repo: "{{ repo_url_raw }}"
         dest: "{{ repo_workdir }}"
-        version: "{{ git_branch }}"
+        version: "{{ git_branch_target }}"
         force: true
 
     - name: Montar URL autenticada para o push
@@ -80,21 +80,21 @@
     - name: Adicionar nova regra no rulebook (idempotente, com marker por alertname)
       ansible.builtin.blockinfile:
         path: "{{ repo_workdir }}/{{ rulebook_path }}"
-        marker: "    # {mark} AIOPS AUTO-LEARN: {{ alertname }}"
+        marker: "    # {mark} AIOPS AUTO-LEARN: {{ _alertname }}"
         insertbefore: '^    - name: "Print de qualquer alerta recebido do Alertmanager"'
         block: |2
-              - name: "AUTO-LEARN — {{ alertname }} → {{ stats_execute_jt_name }}"
-                condition: event.alert.labels.alertname == "{{ alertname }}" and event.alert.status == "firing"
+              - name: "AUTO-LEARN — {{ _alertname }} → {{ _stats_jt_name }}"
+                condition: event.alert.labels.alertname == "{{ _alertname }}" and event.alert.status == "firing"
                 action:
                   run_job_template:
-                    name: "{{ stats_execute_jt_name }}"
+                    name: "{{ _stats_jt_name }}"
                     organization: "ROQUE"
                     job_args:
                       limit: "{{ '{{' }} event.meta.hosts {{ '}}' }}"
                     extra_vars:
                       target_host: "{{ '{{' }} event.alert.labels.instance {{ '}}' }}"
-                      service_name: "{{ service_name }}"
-                      alertname: "{{ alertname }}"
+                      service_name: "{{ _service_name }}"
+                      alertname: "{{ _alertname }}"
 
     - name: Configurar identidade do commit
       ansible.builtin.command:
@@ -125,7 +125,7 @@
           - git
           - commit
           - "-m"
-          - "feat(eda): auto-learn rule {{ alertname }} → {{ stats_execute_jt_name }} ({{ sn_incident_number }})"
+          - "feat(eda): auto-learn rule {{ _alertname }} → {{ _stats_jt_name }} ({{ _sn_incident }})"
       register: git_commit_out
       changed_when: "'nothing to commit' not in (git_commit_out.stdout | default('')) + (git_commit_out.stderr | default(''))"
       failed_when:
@@ -139,7 +139,7 @@
           - git
           - push
           - origin
-          - "{{ git_branch }}"
+          - "{{ git_branch_target }}"
       changed_when: true
       no_log: false
 
@@ -184,7 +184,7 @@
 
     - name: Sincronizar EDA Project (se id fornecido)
       ansible.builtin.uri:
-        url: "{{ controller_host }}/api/eda/v1/projects/{{ eda_project_id }}/sync/"
+        url: "{{ controller_host }}/api/eda/v1/projects/{{ _eda_project_id }}/sync/"
         method: POST
         headers:
           Authorization: "Bearer {{ controller_token }}"
@@ -195,7 +195,7 @@
 
     - name: Aguardar sync do EDA Project
       ansible.builtin.uri:
-        url: "{{ controller_host }}/api/eda/v1/projects/{{ eda_project_id }}/"
+        url: "{{ controller_host }}/api/eda/v1/projects/{{ _eda_project_id }}/"
         method: GET
         headers:
           Authorization: "Bearer {{ controller_token }}"
@@ -209,7 +209,7 @@
 
     - name: Desabilitar Activation no EDA (para recarregar rulebook)
       ansible.builtin.uri:
-        url: "{{ controller_host }}/api/eda/v1/activations/{{ eda_activation_id }}/disable/"
+        url: "{{ controller_host }}/api/eda/v1/activations/{{ _eda_activation_id }}/disable/"
         method: POST
         headers:
           Authorization: "Bearer {{ controller_token }}"
@@ -224,7 +224,7 @@
 
     - name: Habilitar Activation novamente
       ansible.builtin.uri:
-        url: "{{ controller_host }}/api/eda/v1/activations/{{ eda_activation_id }}/enable/"
+        url: "{{ controller_host }}/api/eda/v1/activations/{{ _eda_activation_id }}/enable/"
         method: POST
         headers:
           Authorization: "Bearer {{ controller_token }}"
@@ -237,6 +237,6 @@
         aggregate: false
         data:
           stats_eda_commit_sha: "{{ git_sha.stdout | trim }}"
-          stats_eda_rule_added: "{{ alertname }}"
-          stats_eda_target_jt: "{{ stats_execute_jt_name }}"
+          stats_eda_rule_added: "{{ _alertname }}"
+          stats_eda_target_jt: "{{ _stats_jt_name }}"
           stats_eda_activation_reloaded: "{{ eda_activation_id | int > 0 }}"

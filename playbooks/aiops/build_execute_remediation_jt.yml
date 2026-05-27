@@ -31,12 +31,12 @@
     organization_id: "{{ aiops_org_id | default(15) | int }}"
     execution_environment_id: "{{ aiops_ee_id | default(13) | int }}"
     ssh_credential_id: "{{ aiops_ssh_credential_id | default(34) | int }}"
-    stats_playbook_path: "{{ stats_playbook_path | default('') }}"
-    stats_playbook_filename: "{{ stats_playbook_filename | default('') }}"
-    sn_incident_number: "{{ sn_incident_number | default('NOINC') }}"
-    target_host: "{{ target_host | default('all') }}"
-    service_name: "{{ service_name | default('') }}"
-    jt_name: "AIOPS-DYN-{{ sn_incident_number }}"
+    _stats_path: "{{ stats_playbook_path | default('') }}"
+    _stats_filename: "{{ stats_playbook_filename | default('') }}"
+    _sn_incident: "{{ sn_incident_number | default('NOINC') }}"
+    _target_host: "{{ target_host | default('all') }}"
+    _service_name: "{{ service_name | default('') }}"
+    jt_name: "AIOPS-DYN-{{ _sn_incident }}"
 
   tasks:
     - name: Validar pré-condições
@@ -90,21 +90,21 @@
         body_format: json
         body:
           name: "{{ jt_name }}"
-          description: "JT temporário gerado pelo WF-AIOPS-REMEDIATION para incidente {{ sn_incident_number }}"
+          description: "JT temporário gerado pelo WF-AIOPS-REMEDIATION para incidente {{ _sn_incident }}"
           job_type: "run"
           inventory: "{{ inventory_id }}"
           project: "{{ project_id }}"
-          playbook: "{{ stats_playbook_path }}"
+          playbook: "{{ _stats_path }}"
           execution_environment: "{{ execution_environment_id }}"
           organization: "{{ organization_id }}"
-          limit: "{{ target_host }}"
+          limit: "{{ _target_host }}"
           verbosity: 1
           ask_limit_on_launch: false
           ask_variables_on_launch: true
           extra_vars: |
-            target_host: "{{ target_host }}"
-            service_name: "{{ service_name }}"
-            sn_incident_number: "{{ sn_incident_number }}"
+            target_host: "{{ _target_host }}"
+            service_name: "{{ _service_name }}"
+            sn_incident_number: "{{ _sn_incident }}"
         validate_certs: "{{ controller_verify_ssl }}"
         status_code: [201, 200, 400]
         return_content: true
@@ -148,9 +148,9 @@
         body_format: json
         body:
           extra_vars:
-            target_host: "{{ target_host }}"
-            service_name: "{{ service_name }}"
-            sn_incident_number: "{{ sn_incident_number }}"
+            target_host: "{{ _target_host }}"
+            service_name: "{{ _service_name }}"
+            sn_incident_number: "{{ _sn_incident }}"
         validate_certs: "{{ controller_verify_ssl }}"
         status_code: [201, 202]
         return_content: true

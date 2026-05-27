@@ -29,10 +29,10 @@
     ai_max_tokens: 4000
     litellm_host: "{{ lookup('env', 'LITELLM_HOST') }}"
     litellm_token: "{{ lookup('env', 'LITELLM_TOKEN') }}"
-    prompt_manual: "{{ prompt_manual | default('') }}"
-    sn_incident_number: "{{ sn_incident_number | default('NOINC') }}"
-    target_host: "{{ target_host | default('all') }}"
-    service_name: "{{ service_name | default('') }}"
+    _prompt_manual: "{{ prompt_manual | default('') }}"
+    _sn_incident: "{{ sn_incident_number | default('NOINC') }}"
+    _target_host: "{{ target_host | default('all') }}"
+    _service_name: "{{ service_name | default('') }}"
 
   tasks:
     - name: Validar credenciais e prompt
@@ -40,7 +40,7 @@
         that:
           - litellm_host | length > 0
           - litellm_token | length > 0
-          - prompt_manual | length > 20
+          - _prompt_manual | length > 20
         fail_msg: "LITELLM_HOST, LITELLM_TOKEN e prompt_manual são obrigatórios."
 
     - name: Montar system prompt de geração
@@ -51,12 +51,12 @@
       ansible.builtin.set_fact:
         ai_user_prompt: |
           Generate an Ansible playbook to remediate the following issue.
-          Target host (use as hosts:): "{{ target_host }}"
-          Service involved: "{{ service_name }}"
-          Incident: {{ sn_incident_number }}
+          Target host (use as hosts:): "{{ _target_host }}"
+          Service involved: "{{ _service_name }}"
+          Incident: {{ _sn_incident }}
 
           Remediation requirement:
-          {{ prompt_manual }}
+          {{ _prompt_manual }}
 
     - name: Montar payload
       ansible.builtin.set_fact:
@@ -124,7 +124,7 @@
 
     - name: Definir nome do arquivo
       ansible.builtin.set_fact:
-        playbook_filename: "{{ ansible_date_time.iso8601_basic_short | default(lookup('pipe', 'date -u +%Y%m%dT%H%M%S')) }}_{{ sn_incident_number }}.yml"
+        playbook_filename: "{{ ansible_date_time.iso8601_basic_short | default(lookup('pipe', 'date -u +%Y%m%dT%H%M%S')) }}_{{ _sn_incident }}.yml"
 
     - name: Calcular caminho relativo
       ansible.builtin.set_fact:

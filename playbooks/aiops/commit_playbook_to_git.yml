@@ -22,17 +22,17 @@
   connection: local
   gather_facts: true
   vars:
-    repo_workdir: "/tmp/aiops-repo-{{ sn_incident_number | default('NOINC') }}-{{ ansible_date_time.epoch }}"
+    _sn_incident: "{{ sn_incident_number | default('NOINC') }}"
+    repo_workdir: "/tmp/aiops-repo-{{ _sn_incident }}-{{ ansible_date_time.epoch }}"
     repo_url_raw: "{{ lookup('env', 'GITHUB_REPO_URL') | default('https://github.com/allanroque/roque-lab-demo.git', true) }}"
     git_user: "{{ lookup('env', 'GITHUB_USER') }}"
     git_token: "{{ lookup('env', 'GITHUB_TOKEN') }}"
-    git_branch: "{{ git_branch | default('main') }}"
-    commit_author_name: "{{ git_commit_author_name | default('AIOps Bot') }}"
-    commit_author_email: "{{ git_commit_author_email | default('aiops-bot@roque.local') }}"
-    sn_incident_number: "{{ sn_incident_number | default('NOINC') }}"
-    stats_generated_yaml: "{{ stats_generated_yaml | default('') }}"
-    stats_playbook_filename: "{{ stats_playbook_filename | default('') }}"
-    stats_playbook_path: "{{ stats_playbook_path | default('') }}"
+    git_branch_target: main
+    commit_author_name: AIOps Bot
+    commit_author_email: aiops-bot@roque.local
+    _stats_yaml: "{{ stats_generated_yaml | default('') }}"
+    _stats_filename: "{{ stats_playbook_filename | default('') }}"
+    _stats_path: "{{ stats_playbook_path | default('') }}"
 
   tasks:
     - name: Validar pré-condições
@@ -49,7 +49,7 @@
       ansible.builtin.git:
         repo: "{{ repo_url_raw }}"
         dest: "{{ repo_workdir }}"
-        version: "{{ git_branch }}"
+        version: "{{ git_branch_target }}"
         force: true
 
     - name: Montar URL autenticada para o push
@@ -77,8 +77,8 @@
 
     - name: Escrever playbook gerado pela IA
       ansible.builtin.copy:
-        content: "{{ stats_generated_yaml }}"
-        dest: "{{ repo_workdir }}/{{ stats_playbook_path }}"
+        content: "{{ _stats_yaml }}"
+        dest: "{{ repo_workdir }}/{{ _stats_path }}"
         mode: "0644"
 
     - name: Configurar identidade do commit
@@ -100,7 +100,7 @@
         argv:
           - git
           - add
-          - "{{ stats_playbook_path }}"
+          - "{{ _stats_path }}"
       changed_when: true
 
     - name: git commit
@@ -110,7 +110,7 @@
           - git
           - commit
           - "-m"
-          - "feat(aiops): playbook gerado pela IA para {{ sn_incident_number }}"
+          - "feat(aiops): playbook gerado pela IA para {{ _sn_incident }}"
       register: git_commit_out
       changed_when: "'nothing to commit' not in (git_commit_out.stdout | default('')) + (git_commit_out.stderr | default(''))"
       failed_when:
@@ -124,7 +124,7 @@
           - git
           - push
           - origin
-          - "{{ git_branch }}"
+          - "{{ git_branch_target }}"
       register: git_push_out
       changed_when: true
       no_log: false
@@ -149,5 +149,5 @@
         aggregate: false
         data:
           stats_commit_sha: "{{ git_sha.stdout | trim }}"
-          stats_playbook_path: "{{ stats_playbook_path }}"
-          stats_playbook_filename: "{{ stats_playbook_filename }}"
+          stats_playbook_path: "{{ _stats_path }}"
+          stats_playbook_filename: "{{ _stats_filename }}"
