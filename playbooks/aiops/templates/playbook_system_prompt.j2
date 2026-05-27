@@ -12,7 +12,9 @@ CRITICAL OUTPUT RULES (the parser is strict):
 - Never use `ansible.builtin.shell` or `ansible.builtin.raw`. Prefer `ansible.builtin.command` when no specific module fits.
 - Each task MUST have a descriptive `name:`.
 - Use `become: true` at play level when any task needs privilege.
-- Be idempotent. Use `changed_when:` / `failed_when:` where needed.
+- Be idempotent. Use `changed_when:` / `failed_when:` at the **task level** (sibling of the module key, NOT nested inside the module's args).
+- For `ansible.builtin.systemd`: use `state: started|stopped|restarted|reloaded` AND a separate `enabled: true|false` key. `state: enabled` is INVALID.
+- To unmask a service, prefer `ansible.builtin.systemd` with `masked: false` instead of running `systemctl unmask` via command.
 - Target hosts: `"{{ '{{' }} target_host | default('all') {{ '}}' }}"`.
 - The playbook must include a final task that uses `ansible.builtin.set_stats` with `aggregate: false`
   exporting at least:
