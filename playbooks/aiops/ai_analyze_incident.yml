@@ -110,9 +110,9 @@
       ansible.builtin.set_fact:
         ai_raw_content: "{{ ai_response.json.choices[0].message.content }}"
 
-    - name: Remover blocos <think>...</think> (deepseek-r1)
+    - name: Remover blocos de raciocínio do deepseek-r1 (com ou sem <think> de abertura)
       ansible.builtin.set_fact:
-        ai_no_think: "{{ ai_raw_content | regex_replace('(?s)<think>.*?</think>', '') | trim }}"
+        ai_no_think: "{{ ai_raw_content | regex_replace('(?s)<think>.*?</think>', '') | regex_replace('(?s)^.*?</think>', '') | trim }}"
 
     - name: Limpar code fences da resposta
       ansible.builtin.set_fact:
@@ -125,9 +125,9 @@
         - ai_clean_content.find('{') >= 0
         - ai_clean_content.rfind('}') > ai_clean_content.find('{')
 
-    - name: Decodificar JSON da IA
+    - name: Decodificar JSON da IA (lida com dict ou string)
       ansible.builtin.set_fact:
-        ai_parsed: "{{ ai_clean_content | from_json }}"
+        ai_parsed: "{{ ai_clean_content if (ai_clean_content is mapping) else (ai_clean_content | from_json) }}"
 
     - name: Validar campos esperados
       ansible.builtin.assert:
