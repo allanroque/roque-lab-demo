@@ -1,0 +1,166 @@
+---
+# =========================================================================
+# Playbook: AIOPS — Simulate Service Failure (helper de teste)
+# =========================================================================
+# Quebra um serviço de propósito para validar o pipeline AIOps end-to-end.
+#
+# Variáveis (Survey AAP):
+#   target_host       - Host alvo
+#   service_name      - Serviço a quebrar (default: httpd)
+#   failure_type      - Tipo de quebra:
+#                         "stop"       → systemctl stop + mask
+#                         "port_conflict" → ocupa a porta com nc
+#                         "config_break"  → corrompe config (sintaxe inválida)
+#                         "permission"    → remove permissão de leitura no DocumentRoot
+#                         "all_restore"   → desfaz tudo, restaura serviço
+#
+# Use junto com o WF-AIOPS-ENRICHMENT pra simular um disparo do Alertmanager.
+# =========================================================================
+- name: AIOPS — Simulate service failure
+  hosts: "{{ target_host | default('all') }}"
+  become: true
+  gather_facts: false
+  vars:
+    service_name: "{{ service_name | default('httpd') }}"
+    failure_type: "{{ failure_type | default('stop') }}"
+
+  tasks:
+    # ---------- RESTORE ----------
+    - name: "[restore] Matar processos squatters na porta 80"
+      ansible.builtin.shell: |
+        set +e
+        pids=$(ss -ltnp 2>/dev/null | awk '/:80 /{print $NF}' | grep -oP 'pid=\K[0-9]+' | sort -u)
+        for pid in $pids; do
+          name=$(ps -o comm= -p "$pid" 2>/dev/null)
+          if [ "$name" != "httpd" ] && [ "$name" != "nginx" ]; then
+            kill -9 "$pid" 2>/dev/null
+          fi
+        done
+        exit 0
+      changed_when: false
+      when: failure_type == 'all_restore'
+
+    - name: "[restore] Restaurar configuração se backup existir"
+      ansible.builtin.copy:
+        src: "/etc/httpd/conf/httpd.conf.aiops-backup"
+        dest: "/etc/httpd/conf/httpd.conf"
+        remote_src: true
+        mode: "0644"
+      when: failure_type == 'all_restore'
+      failed_when: false
+
+    - name: "[restore] Restaurar permissões do DocumentRoot"
+      ansible.builtin.file:
+        path: "/var/www/html"
+        state: directory
+        mode: "0755"
+        recurse: true
+      when: failure_type == 'all_restore'
+      failed_when: false
+
+    - name: "[restore] Desmascarar e iniciar serviço"
+      ansible.builtin.systemd:
+        name: "{{ service_name }}"
+        masked: false
+        state: started
+        enabled: true
+      when: failure_type == 'all_restore'
+
+    # ---------- STOP (default) ----------
+    - name: "[stop] Parar serviço {{ service_name }}"
+      ansible.builtin.systemd:
+        name: "{{ service_name }}"
+        state: stopped
+        masked: true
+      when: failure_type == 'stop'
+
+    # ---------- PORT CONFLICT ----------
+    - name: "[port_conflict] Garantir que ncat existe"
+      ansible.builtin.package:
+        name: nmap-ncat
+        state: present
+      when: failure_type == 'port_conflict'
+
+    - name: "[port_conflict] Parar httpd primeiro"
+      ansible.builtin.systemd:
+        name: "{{ service_name }}"
+        state: stopped
+      when: failure_type == 'port_conflict'
+
+    - name: "[port_conflict] Ocupar porta 80 com ncat em background (systemd-run)"
+      ansible.builtin.command: "systemd-run --unit=aiops-port-squatter ncat -kl 80"
+      changed_when: true
+      when: failure_type == 'port_conflict'
+
+    - name: "[port_conflict] Tentar subir httpd (vai falhar com bind error)"
+      ansible.builtin.systemd:
+        name: "{{ service_name }}"
+        state: started
+      register: try_start
+      failed_when: false
+      when: failure_type == 'port_conflict'
+
+    # ---------- CONFIG BREAK ----------
+    - name: "[config_break] Backup do httpd.conf"
+      ansible.builtin.copy:
+        src: "/etc/httpd/conf/httpd.conf"
+        dest: "/etc/httpd/conf/httpd.conf.aiops-backup"
+        remote_src: true
+        force: false
+        mode: "0644"
+      when: failure_type == 'config_break'
+
+    - name: "[config_break] Injetar linha inválida no httpd.conf"
+      ansible.builtin.lineinfile:
+        path: "/etc/httpd/conf/httpd.conf"
+        line: "ThisDirectiveDoesNotExist Foo Bar"
+        insertafter: EOF
+      when: failure_type == 'config_break'
+
+    - name: "[config_break] Tentar reiniciar httpd (vai falhar com syntax error)"
+      ansible.builtin.systemd:
+        name: "{{ service_name }}"
+        state: restarted
+      register: try_restart
+      failed_when: false
+      when: failure_type == 'config_break'
+
+    # ---------- PERMISSION ----------
+    - name: "[permission] Garantir DocumentRoot existe"
+      ansible.builtin.file:
+        path: "/var/www/html"
+        state: directory
+        mode: "0755"
+      when: failure_type == 'permission'
+
+    - name: "[permission] Garantir index.html"
+      ansible.builtin.copy:
+        content: "<html><body>OK</body></html>"
+        dest: "/var/www/html/index.html"
+        mode: "0644"
+      when: failure_type == 'permission'
+
+    - name: "[permission] Remover permissões do index.html (provoca 403)"
+      ansible.builtin.file:
+        path: "/var/www/html/index.html"
+        mode: "0000"
+      when: failure_type == 'permission'
+
+    - name: "[permission] Garantir httpd rodando"
+      ansible.builtin.systemd:
+        name: "{{ service_name }}"
+        state: started
+      when: failure_type == 'permission'
+
+    # ---------- REPORT ----------
+    - name: Reportar estado pós-simulação
+      ansible.builtin.command: "systemctl is-active {{ service_name }}"
+      register: post_state
+      changed_when: false
+      failed_when: false
+
+    - name: Exibir resultado
+      ansible.builtin.debug:
+        msg:
+          - "Tipo de falha aplicado: {{ failure_type }}"
+          - "Serviço {{ service_name }} agora: {{ post_state.stdout | trim }}"

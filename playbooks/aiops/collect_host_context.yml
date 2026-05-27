@@ -51,4 +51,4 @@
           stats_disk: "{{ disk_usage.stdout }}"
           stats_memory: "{{ free_out.stdout }}"
           stats_top_procs: "{{ top_mem.stdout_lines[0:11] | join('\n') }}"
-          stats_dmesg_errors: "{{ dmesg_out.stdout | default('') | regex_findall('.*') | last(20) | join('\n') if dmesg_out.stdout else '' }}"
+          stats_dmesg_errors: "{{ (dmesg_out.stdout | default('')).split('\n')[-20:] | join('\n') }}"
