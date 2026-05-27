@@ -239,4 +239,4 @@
           stats_eda_commit_sha: "{{ git_sha.stdout | trim }}"
           stats_eda_rule_added: "{{ _alertname }}"
           stats_eda_target_jt: "{{ _stats_jt_name }}"
-          stats_eda_activation_reloaded: "{{ eda_activation_id | int > 0 }}"
+          stats_eda_activation_reloaded: "{{ (eda_activation_id | default(0) | int) > 0 }}"
