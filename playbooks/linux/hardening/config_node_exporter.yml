@@ -18,6 +18,9 @@
     node_exporter_port: 9100
     node_exporter_install_dir: /usr/local/bin
     node_exporter_temp_dir: /tmp/node_exporter_extract
+    # Units exportadas como node_systemd_unit_state — alimenta os alertas
+    # FirewalldDown, ChronyDown, RsyslogDown e similares no Prometheus.
+    node_exporter_collector_systemd_units: '^(firewalld|sshd|chronyd|httpd|postgresql|rsyslog)\.service$'
 
   tasks:
     - name: Garantir que diretório de instalação exista
@@ -101,11 +104,14 @@
           Group={{ node_exporter_user }}
           Type=simple
           ExecStart={{ node_exporter_install_dir }}/node_exporter \
-            --web.listen-address=:{{ node_exporter_port }}
+            --web.listen-address=:{{ node_exporter_port }} \
+            --collector.systemd \
+            --collector.systemd.unit-include={{ node_exporter_collector_systemd_units }}
 
           [Install]
           WantedBy=multi-user.target
         mode: "0644"
+      notify: restart node_exporter
       tags:
         - node_exporter
 
@@ -134,3 +140,10 @@
       tags:
         - node_exporter
         - monitoring
+
+  handlers:
+    - name: restart node_exporter
+      ansible.builtin.systemd:
+        name: node_exporter
+        state: restarted
+        daemon_reload: true
