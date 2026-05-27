@@ -1,0 +1,186 @@
+---
+# =========================================================================
+# Playbook: AIOPS-CHAOS — Setup surveys nos JTs AIOPS-CHAOS-INJECT e -VERIFY
+# =========================================================================
+# Cria/atualiza o survey_spec dos JTs de chaos via API do Controller.
+# Roda uma única vez após o sync do projeto.
+#
+# Credentials: CRED-AAP-ROQUE (controller token)
+# =========================================================================
+- name: AIOPS-CHAOS — Setup surveys
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    controller_host: "{{ lookup('env', 'CONTROLLER_HOST') | default(lookup('env', 'AAP_HOSTNAME'), true) }}"
+    controller_token: "{{ lookup('env', 'CONTROLLER_OAUTH_TOKEN') | default(lookup('env', 'AAP_TOKEN'), true) }}"
+    controller_verify_ssl: "{{ (lookup('env', 'CONTROLLER_VERIFY_SSL') | default('false', true)) | bool }}"
+    chaos_inject_jt_id: "{{ chaos_inject_jt | default(417) | int }}"
+    chaos_verify_jt_id: "{{ chaos_verify_jt | default(418) | int }}"
+
+  tasks:
+    - name: Validar credenciais
+      ansible.builtin.assert:
+        that:
+          - controller_host | length > 0
+          - controller_token | length > 0
+
+    - name: Survey do AIOPS-CHAOS-INJECT
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/job_templates/{{ chaos_inject_jt_id }}/survey_spec/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          name: "Chaos Inject Survey"
+          description: "Parametros para injetar falhas nos componentes alvo"
+          spec:
+            - question_name: "Familia de alerta"
+              question_description: "Componente a quebrar/restaurar"
+              required: true
+              type: multiplechoice
+              variable: alert_family
+              choices:
+                - apache
+                - app
+                - chrony
+                - firewall
+                - postgres
+                - rsyslog
+                - selinux
+                - all
+              default: apache
+              min: null
+              max: null
+            - question_name: "Modo"
+              question_description: "break = quebra | restore = restaura"
+              required: true
+              type: multiplechoice
+              variable: mode
+              choices:
+                - break
+                - restore
+              default: break
+              min: null
+              max: null
+            - question_name: "Hosts alvo (chaos_targets)"
+              question_description: "Grupo ou hostname (ex.: server01.aroque.com.br)"
+              required: false
+              type: text
+              variable: chaos_targets
+              default: server01.aroque.com.br
+              min: 0
+              max: 256
+            - question_name: "Nome do servico de app"
+              question_description: "Usado quando alert_family=app"
+              required: false
+              type: text
+              variable: app_service_name
+              default: httpd
+              min: 0
+              max: 64
+            - question_name: "Nome do servico do Postgres"
+              question_description: "Usado quando alert_family=postgres"
+              required: false
+              type: text
+              variable: postgres_service_name
+              default: postgresql
+              min: 0
+              max: 64
+            - question_name: "Pausa apos break (segundos)"
+              question_description: "Tempo para o Prometheus avaliar"
+              required: false
+              type: integer
+              variable: wait_seconds_after_break
+              default: 30
+              min: 0
+              max: 600
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: [200, 201]
+      register: inject_survey
+
+    - name: Survey do AIOPS-CHAOS-VERIFY
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/job_templates/{{ chaos_verify_jt_id }}/survey_spec/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          name: "Chaos Verify Survey"
+          description: "Parametros para verificar alerta no Prometheus"
+          spec:
+            - question_name: "Familia de alerta"
+              question_description: "Componente cujo alerta deve estar firing"
+              required: true
+              type: multiplechoice
+              variable: alert_family
+              choices:
+                - apache
+                - app
+                - chrony
+                - firewall
+                - postgres
+                - rsyslog
+                - selinux
+              default: apache
+              min: null
+              max: null
+            - question_name: "URL do Prometheus"
+              question_description: "Ex.: http://localhost:9090"
+              required: true
+              type: text
+              variable: prometheus_url
+              default: "http://localhost:9090"
+              min: 1
+              max: 256
+            - question_name: "Alertname esperado (opcional)"
+              question_description: "Override do mapeamento padrao"
+              required: false
+              type: text
+              variable: expected_alertname
+              default: ""
+              min: 0
+              max: 128
+            - question_name: "Retries"
+              question_description: "Quantas vezes consultar o /api/v1/alerts"
+              required: false
+              type: integer
+              variable: max_retries
+              default: 12
+              min: 1
+              max: 60
+            - question_name: "Retry delay (s)"
+              required: false
+              type: integer
+              variable: retry_delay
+              default: 5
+              min: 1
+              max: 60
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: [200, 201]
+      register: verify_survey
+
+    - name: Habilitar survey nos JTs
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/job_templates/{{ item }}/"
+        method: PATCH
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        body_format: json
+        body:
+          survey_enabled: true
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: [200]
+      loop:
+        - "{{ chaos_inject_jt_id }}"
+        - "{{ chaos_verify_jt_id }}"
+
+    - name: Resultado
+      ansible.builtin.debug:
+        msg:
+          - "AIOPS-CHAOS-INJECT (id {{ chaos_inject_jt_id }}) survey: {{ inject_survey.status }}"
+          - "AIOPS-CHAOS-VERIFY (id {{ chaos_verify_jt_id }}) survey: {{ verify_survey.status }}"
