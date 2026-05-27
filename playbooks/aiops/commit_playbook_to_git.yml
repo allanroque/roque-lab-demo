@@ -45,17 +45,28 @@
           - stats_playbook_path | length > 0
         fail_msg: "Credenciais Git ou conteúdo do playbook ausentes."
 
+    - name: Clonar repositório (público) na branch alvo
+      ansible.builtin.git:
+        repo: "{{ repo_url_raw }}"
+        dest: "{{ repo_workdir }}"
+        version: "{{ git_branch }}"
+        force: true
+
     - name: Montar URL autenticada para o push
       ansible.builtin.set_fact:
         repo_authed_url: "{{ repo_url_raw | regex_replace('^https://', 'https://' + git_user + ':' + git_token + '@') }}"
       no_log: true
 
-    - name: Clonar repositório (branch {{ git_branch }})
-      ansible.builtin.git:
-        repo: "{{ repo_authed_url }}"
-        dest: "{{ repo_workdir }}"
-        version: "{{ git_branch }}"
-        force: true
+    - name: Configurar remote 'origin' com URL autenticada (apenas para push)
+      ansible.builtin.command:
+        chdir: "{{ repo_workdir }}"
+        argv:
+          - git
+          - remote
+          - set-url
+          - origin
+          - "{{ repo_authed_url }}"
+      changed_when: true
       no_log: true
 
     - name: Garantir que diretório ai-generated existe
