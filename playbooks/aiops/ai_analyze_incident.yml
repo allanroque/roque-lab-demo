@@ -118,10 +118,11 @@
       ansible.builtin.set_fact:
         ai_clean_content: "{{ ai_no_think | regex_replace('^```(?:json)?\\s*', '') | regex_replace('\\s*```\\s*$', '') | trim }}"
 
-    - name: Recortar do primeiro { até o último } (fallback se houver prosa extra)
+    - name: Recortar do primeiro { até o último } (fallback se for string com prosa extra)
       ansible.builtin.set_fact:
         ai_clean_content: "{{ ai_clean_content[ai_clean_content.find('{') : ai_clean_content.rfind('}') + 1] }}"
       when:
+        - ai_clean_content is string
         - ai_clean_content.find('{') >= 0
         - ai_clean_content.rfind('}') > ai_clean_content.find('{')
 
