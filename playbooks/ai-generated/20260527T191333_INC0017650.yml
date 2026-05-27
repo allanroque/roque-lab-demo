@@ -1,0 +1,35 @@
+---
+- name: Remediar serviço httpd - Incidente INC0017650
+  hosts: server01.aroque.com.br
+  become: true
+  tasks:
+    - name: Desmascarar serviço httpd
+      ansible.builtin.systemd:
+        name: httpd
+        state: started
+        masked: false
+        changed_when: false
+        failed_when: false
+
+    - name: Habilitar serviço httpd
+      ansible.builtin.systemd:
+        name: httpd
+        state: started
+        enabled: true
+        changed_when: false
+        failed_when: false
+
+    - name: Iniciar serviço httpd
+      ansible.builtin.systemd:
+        name: httpd
+        state: started
+        enabled: true
+        changed_when: false
+        failed_when: false
+
+    - name: Relatar estatísticas de remediação
+      ansible.builtin.set_stats:
+        aggregate: false
+        data:
+          stats_remediation_action: "Serviços httpd unmaskado, habilitado e iniciado"
+          stats_remediation_success: true
