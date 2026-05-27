@@ -20,15 +20,15 @@
   connection: local
   gather_facts: false
   vars:
-    remediation_wf_name: "{{ remediation_wf_name | default('WF-AIOPS-REMEDIATION') }}"
+    remediation_wf_name: "WF-AIOPS-REMEDIATION"
     controller_host: "{{ lookup('env', 'CONTROLLER_HOST') | default(lookup('env', 'AAP_HOSTNAME'), true) }}"
     controller_token: "{{ lookup('env', 'CONTROLLER_OAUTH_TOKEN') | default(lookup('env', 'AAP_TOKEN'), true) }}"
     controller_verify_ssl: "{{ (lookup('env', 'CONTROLLER_VERIFY_SSL') | default('false', true)) | bool }}"
-    sn_incident_number: "{{ sn_incident_number | default('UNKNOWN') }}"
-    target_host: "{{ stats_target_host | default('') }}"
-    service_name: "{{ stats_service_name | default('') }}"
-    ai_prompt_suggestion: "{{ stats_ai_prompt_suggestion | default('') }}"
-    ai_rca: "{{ stats_ai_rca | default('') }}"
+    _sn_incident_number: "{{ sn_incident_number | default('UNKNOWN') }}"
+    _target_host: "{{ stats_target_host | default(target_host | default('')) }}"
+    _service_name: "{{ stats_service_name | default(service_name | default('')) }}"
+    _ai_prompt_suggestion: "{{ stats_ai_prompt_suggestion | default('') }}"
+    _ai_rca: "{{ stats_ai_rca | default('') }}"
 
   tasks:
     - name: Validar credencial AAP
@@ -37,7 +37,7 @@
           - controller_host | length > 0
           - controller_token | length > 0
 
-    - name: Buscar id do {{ remediation_wf_name }}
+    - name: "Buscar id do workflow de remediação"
       ansible.builtin.uri:
         url: "{{ controller_host }}/api/controller/v2/workflow_job_templates/?name={{ remediation_wf_name | urlencode }}"
         method: GET
@@ -68,7 +68,7 @@
               required: true
               type: "text"
               variable: "sn_incident_number"
-              default: "{{ sn_incident_number }}"
+              default: "{{ _sn_incident_number }}"
               min: 0
               max: 64
             - question_name: "Host alvo"
@@ -76,7 +76,7 @@
               required: true
               type: "text"
               variable: "target_host"
-              default: "{{ target_host }}"
+              default: "{{ _target_host }}"
               min: 0
               max: 255
             - question_name: "Serviço afetado"
@@ -84,7 +84,7 @@
               required: false
               type: "text"
               variable: "service_name"
-              default: "{{ service_name }}"
+              default: "{{ _service_name }}"
               min: 0
               max: 64
             - question_name: "Prompt manual (editável)"
@@ -92,7 +92,7 @@
               required: true
               type: "textarea"
               variable: "prompt_manual"
-              default: "{{ ai_prompt_suggestion }}"
+              default: "{{ _ai_prompt_suggestion }}"
               min: 0
               max: 8000
             - question_name: "Sugestão da IA (apenas leitura)"
@@ -100,7 +100,7 @@
               required: false
               type: "textarea"
               variable: "prompt_ai_suggestion"
-              default: "{{ ai_prompt_suggestion }}"
+              default: "{{ _ai_prompt_suggestion }}"
               min: 0
               max: 8000
             - question_name: "RCA (apenas leitura)"
@@ -108,7 +108,7 @@
               required: false
               type: "textarea"
               variable: "rca_context"
-              default: "{{ ai_rca }}"
+              default: "{{ _ai_rca }}"
               min: 0
               max: 8000
 
@@ -140,7 +140,7 @@
 
     - name: Exibir resultado
       ansible.builtin.debug:
-        msg: "Survey do {{ remediation_wf_name }} (id={{ remediation_wf_id }}) atualizada. Incidente={{ sn_incident_number }}."
+        msg: "Survey do {{ remediation_wf_name }} (id={{ remediation_wf_id }}) atualizada. Incidente={{ _sn_incident_number }}."
 
     - name: Exportar id do workflow de remediação
       ansible.builtin.set_stats:
