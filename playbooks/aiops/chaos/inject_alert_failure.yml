@@ -1,0 +1,267 @@
+---
+# =========================================================================
+# Playbook: AIOPS-CHAOS — Inject alert failures (Chaos Engineering)
+# =========================================================================
+# Simula falhas nos principais grupos de alertas para validar:
+#   1) que o Alertmanager/Prometheus dispara o alerta esperado
+#   2) que o EDA/AIOps responde (enrichment -> remediation)
+#
+# Famílias suportadas (alert_family):
+#   - apache    : para o httpd
+#   - app       : para o servico de app (default = httpd, override via app_service_name)
+#   - chrony    : para o chronyd
+#   - firewall  : para o firewalld
+#   - postgres  : para o postgresql (override service via postgres_service_name)
+#   - rsyslog   : para o rsyslog
+#   - selinux   : seta SELinux para permissive
+#   - all       : todas (em sequência)
+#
+# Modos (mode):
+#   - break   (default): introduz a falha
+#   - restore: restaura o servico/configuracao
+#
+# Variaveis (Survey AAP):
+#   alert_family            string (apache|app|chrony|firewall|postgres|rsyslog|selinux|all)
+#   mode                    string (break|restore)
+#   app_service_name        string default 'httpd'
+#   postgres_service_name   string default 'postgresql'
+#   wait_seconds_after_break int default 30 — pausa para o Prometheus avaliar
+#
+# Tags úteis: apache, app, chrony, firewall, postgres, rsyslog, selinux
+# =========================================================================
+- name: AIOPS-CHAOS — Inject alert failure
+  hosts: "{{ chaos_targets | default('all') }}"
+  become: true
+  gather_facts: true
+  vars:
+    alert_family_var: "{{ alert_family | default('apache') }}"
+    chaos_mode: "{{ mode | default('break') }}"
+    app_service: "{{ app_service_name | default('httpd') }}"
+    pg_service: "{{ postgres_service_name | default('postgresql') }}"
+    wait_after_break: "{{ wait_seconds_after_break | default(30) | int }}"
+    chaos_state_dir: /var/lib/aiops-chaos
+    selected_families: "{{ ['apache','app','chrony','firewall','postgres','rsyslog','selinux'] if alert_family_var == 'all' else [alert_family_var] }}"
+
+  pre_tasks:
+    - name: Validar parâmetros
+      ansible.builtin.assert:
+        that:
+          - alert_family_var in ['apache','app','chrony','firewall','postgres','rsyslog','selinux','all']
+          - chaos_mode in ['break','restore']
+        fail_msg: "alert_family deve ser uma de [apache,app,chrony,firewall,postgres,rsyslog,selinux,all] e mode deve ser [break|restore]"
+
+    - name: Garantir diretório de estado do chaos
+      ansible.builtin.file:
+        path: "{{ chaos_state_dir }}"
+        state: directory
+        mode: "0755"
+
+  tasks:
+    # ====================== APACHE ======================
+    - name: APACHE — parar httpd
+      ansible.builtin.systemd:
+        name: httpd
+        state: stopped
+      when:
+        - "'apache' in selected_families"
+        - chaos_mode == 'break'
+      tags: [apache]
+
+    - name: APACHE — iniciar httpd (restore)
+      ansible.builtin.systemd:
+        name: httpd
+        state: started
+        enabled: true
+        masked: false
+      when:
+        - "'apache' in selected_families"
+        - chaos_mode == 'restore'
+      tags: [apache]
+
+    # ======================== APP ========================
+    - name: APP — parar serviço {{ app_service }}
+      ansible.builtin.systemd:
+        name: "{{ app_service }}"
+        state: stopped
+      when:
+        - "'app' in selected_families"
+        - chaos_mode == 'break'
+      tags: [app]
+
+    - name: APP — iniciar serviço {{ app_service }} (restore)
+      ansible.builtin.systemd:
+        name: "{{ app_service }}"
+        state: started
+        enabled: true
+      when:
+        - "'app' in selected_families"
+        - chaos_mode == 'restore'
+      tags: [app]
+
+    # ====================== CHRONY ======================
+    - name: CHRONY — parar chronyd
+      ansible.builtin.systemd:
+        name: chronyd
+        state: stopped
+      when:
+        - "'chrony' in selected_families"
+        - chaos_mode == 'break'
+      tags: [chrony]
+
+    - name: CHRONY — iniciar chronyd (restore)
+      ansible.builtin.systemd:
+        name: chronyd
+        state: started
+        enabled: true
+      when:
+        - "'chrony' in selected_families"
+        - chaos_mode == 'restore'
+      tags: [chrony]
+
+    # ===================== FIREWALL =====================
+    - name: FIREWALL — parar firewalld
+      ansible.builtin.systemd:
+        name: firewalld
+        state: stopped
+      when:
+        - "'firewall' in selected_families"
+        - chaos_mode == 'break'
+      tags: [firewall]
+
+    - name: FIREWALL — iniciar firewalld (restore)
+      ansible.builtin.systemd:
+        name: firewalld
+        state: started
+        enabled: true
+      when:
+        - "'firewall' in selected_families"
+        - chaos_mode == 'restore'
+      tags: [firewall]
+
+    # ===================== POSTGRES =====================
+    - name: POSTGRES — parar serviço {{ pg_service }}
+      ansible.builtin.systemd:
+        name: "{{ pg_service }}"
+        state: stopped
+      failed_when: false
+      when:
+        - "'postgres' in selected_families"
+        - chaos_mode == 'break'
+      tags: [postgres]
+
+    - name: POSTGRES — iniciar serviço {{ pg_service }} (restore)
+      ansible.builtin.systemd:
+        name: "{{ pg_service }}"
+        state: started
+        enabled: true
+      failed_when: false
+      when:
+        - "'postgres' in selected_families"
+        - chaos_mode == 'restore'
+      tags: [postgres]
+
+    # ===================== RSYSLOG =====================
+    - name: RSYSLOG — parar rsyslog
+      ansible.builtin.systemd:
+        name: rsyslog
+        state: stopped
+      when:
+        - "'rsyslog' in selected_families"
+        - chaos_mode == 'break'
+      tags: [rsyslog]
+
+    - name: RSYSLOG — iniciar rsyslog (restore)
+      ansible.builtin.systemd:
+        name: rsyslog
+        state: started
+        enabled: true
+      when:
+        - "'rsyslog' in selected_families"
+        - chaos_mode == 'restore'
+      tags: [rsyslog]
+
+    # ===================== SELINUX =====================
+    - name: SELINUX — salvar estado atual antes do chaos
+      ansible.builtin.command: getenforce
+      register: selinux_before
+      changed_when: false
+      when:
+        - "'selinux' in selected_families"
+        - chaos_mode == 'break'
+      tags: [selinux]
+
+    - name: SELINUX — persistir estado anterior em {{ chaos_state_dir }}/selinux.before
+      ansible.builtin.copy:
+        content: "{{ selinux_before.stdout | default('Enforcing') }}\n"
+        dest: "{{ chaos_state_dir }}/selinux.before"
+        mode: "0644"
+      when:
+        - "'selinux' in selected_families"
+        - chaos_mode == 'break'
+        - selinux_before is defined
+      tags: [selinux]
+
+    - name: SELINUX — setar modo Permissive
+      ansible.builtin.command: setenforce 0
+      changed_when: true
+      when:
+        - "'selinux' in selected_families"
+        - chaos_mode == 'break'
+      tags: [selinux]
+
+    - name: SELINUX — ler estado salvo (restore)
+      ansible.builtin.slurp:
+        src: "{{ chaos_state_dir }}/selinux.before"
+      register: selinux_saved
+      failed_when: false
+      when:
+        - "'selinux' in selected_families"
+        - chaos_mode == 'restore'
+      tags: [selinux]
+
+    - name: SELINUX — restaurar para Enforcing (default Enforcing se sem backup)
+      ansible.builtin.command: "setenforce 1"
+      changed_when: true
+      when:
+        - "'selinux' in selected_families"
+        - chaos_mode == 'restore'
+        - ((selinux_saved.content | default('') | b64decode | trim) | default('Enforcing')) | lower != 'permissive'
+      tags: [selinux]
+
+    # ===================== POST-CHECK =====================
+    - name: Pausa para o Prometheus avaliar o alerta
+      ansible.builtin.pause:
+        seconds: "{{ wait_after_break }}"
+      when:
+        - chaos_mode == 'break'
+        - wait_after_break > 0
+
+    - name: Capturar status final dos serviços tocados
+      ansible.builtin.shell: |
+        for svc in httpd {{ app_service }} chronyd firewalld {{ pg_service }} rsyslog; do
+          state=$(systemctl is-active "$svc" 2>/dev/null || echo "absent")
+          printf '%s=%s\n' "$svc" "$state"
+        done
+        printf 'selinux=%s\n' "$(getenforce 2>/dev/null || echo unknown)"
+      register: chaos_post_status
+      changed_when: false
+
+    - name: Exibir status pós-chaos
+      ansible.builtin.debug:
+        msg:
+          - "alert_family: {{ alert_family_var }}"
+          - "mode: {{ chaos_mode }}"
+          - "host: {{ inventory_hostname }}"
+          - "selected_families: {{ selected_families | join(',') }}"
+          - "status:"
+          - "{{ chaos_post_status.stdout_lines }}"
+
+    - name: Exportar resumo para o workflow (run only on first host to avoid override)
+      ansible.builtin.set_stats:
+        aggregate: false
+        data:
+          stats_chaos_family: "{{ alert_family_var }}"
+          stats_chaos_mode: "{{ chaos_mode }}"
+          stats_chaos_targets: "{{ ansible_play_hosts }}"
+          stats_chaos_post_status: "{{ chaos_post_status.stdout_lines }}"
+      run_once: true

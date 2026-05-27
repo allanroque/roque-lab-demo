@@ -1,0 +1,82 @@
+---
+# =========================================================================
+# Playbook: AIOPS-CHAOS — Verify alert is firing in Prometheus
+# =========================================================================
+# Consulta /api/v1/alerts no Prometheus e valida se pelo menos um alerta
+# da família solicitada está em estado 'firing'.
+#
+# Variáveis:
+#   alert_family       : apache|app|chrony|firewall|postgres|rsyslog|selinux
+#   prometheus_url     : default http://localhost:9090
+#   expected_alertname : opcional — nome exato esperado (override do mapeamento padrão)
+#   max_retries        : default 12 (60s com delay 5s)
+#   retry_delay        : default 5
+#
+# Exporta:
+#   stats_alert_fired         : true/false
+#   stats_alert_matched_names : lista de alertnames encontrados em 'firing'
+#   stats_alert_query_url     : url consultada
+# =========================================================================
+- name: AIOPS-CHAOS — Verify alert firing
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    alert_family_var: "{{ alert_family | default('apache') }}"
+    prom_url: "{{ prometheus_url | default('http://localhost:9090') }}"
+    max_retries_var: "{{ max_retries | default(12) | int }}"
+    retry_delay_var: "{{ retry_delay | default(5) | int }}"
+    family_name_keywords:
+      apache: ['apache', 'httpd', 'appdown']
+      app: ['app', 'appdown']
+      chrony: ['chrony', 'ntp', 'timesync']
+      firewall: ['firewall', 'firewalld']
+      postgres: ['postgres', 'pg_']
+      rsyslog: ['rsyslog', 'syslog']
+      selinux: ['selinux']
+    expected_keywords_default: "{{ family_name_keywords[alert_family_var] | default([alert_family_var]) }}"
+    expected_keywords: "{{ [expected_alertname | lower] if (expected_alertname is defined and expected_alertname | length > 0) else expected_keywords_default }}"
+
+  tasks:
+    - name: Consultar /api/v1/alerts no Prometheus (com retry até alerta firar)
+      ansible.builtin.uri:
+        url: "{{ prom_url }}/api/v1/alerts"
+        method: GET
+        return_content: true
+        status_code: 200
+      register: prom_alerts
+      retries: "{{ max_retries_var }}"
+      delay: "{{ retry_delay_var }}"
+      until: >
+        (prom_alerts.json.data.alerts | default([])
+          | selectattr('state','equalto','firing')
+          | map(attribute='labels.alertname')
+          | map('lower')
+          | select('search', expected_keywords | join('|'))
+          | list | length) > 0
+
+    - name: Extrair alertas em firing que batem com a família
+      ansible.builtin.set_fact:
+        matched_alertnames: >-
+          {{ prom_alerts.json.data.alerts
+              | selectattr('state','equalto','firing')
+              | map(attribute='labels.alertname')
+              | select('search', '(?i)' + (expected_keywords | join('|')))
+              | list | unique }}
+
+    - name: Exibir resultado
+      ansible.builtin.debug:
+        msg:
+          - "Família: {{ alert_family_var }}"
+          - "Keywords: {{ expected_keywords }}"
+          - "Alertas em firing (todos): {{ prom_alerts.json.data.alerts | selectattr('state','equalto','firing') | map(attribute='labels.alertname') | list | unique }}"
+          - "Alertas em firing da família: {{ matched_alertnames }}"
+
+    - name: Exportar resultado da verificação
+      ansible.builtin.set_stats:
+        aggregate: false
+        data:
+          stats_alert_fired: "{{ matched_alertnames | length > 0 }}"
+          stats_alert_matched_names: "{{ matched_alertnames }}"
+          stats_alert_family_checked: "{{ alert_family_var }}"
+          stats_alert_query_url: "{{ prom_url }}/api/v1/alerts"

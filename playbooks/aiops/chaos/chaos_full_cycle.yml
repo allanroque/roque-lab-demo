@@ -1,0 +1,50 @@
+---
+# =========================================================================
+# Playbook: AIOPS-CHAOS — Full cycle (break → verify → wait → restore opcional)
+# =========================================================================
+# Orquestra:
+#   1) Injeta a falha no(s) host(s) alvo via inject_alert_failure.yml
+#   2) Aguarda o Prometheus disparar o alerta esperado
+#   3) Aguarda N segundos para observar reação do EDA/AIOps
+#   4) (Opcional) Restaura o estado original
+#
+# Variáveis (Survey AAP):
+#   alert_family            apache|app|chrony|firewall|postgres|rsyslog|selinux|all
+#   chaos_targets           inventario/grupo (default 'all')
+#   prometheus_url          http://localhost:9090
+#   wait_seconds_observe    segundos para observar reação AIOps (default 60)
+#   auto_restore            true|false (default false — deixa quebrado para o pipeline remediar)
+#   app_service_name        default httpd
+#   postgres_service_name   default postgresql
+# =========================================================================
+- name: AIOPS-CHAOS — Full cycle controller
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    alert_family_var: "{{ alert_family | default('apache') }}"
+    chaos_targets_var: "{{ chaos_targets | default('all') }}"
+    prom_url: "{{ prometheus_url | default('http://localhost:9090') }}"
+    wait_observe: "{{ wait_seconds_observe | default(60) | int }}"
+    auto_restore_var: "{{ (auto_restore | default(false)) | bool }}"
+    app_service: "{{ app_service_name | default('httpd') }}"
+    pg_service: "{{ postgres_service_name | default('postgresql') }}"
+
+  tasks:
+    - name: Etapa 1 — exibir plano de chaos
+      ansible.builtin.debug:
+        msg:
+          - "===== CHAOS PLAN ====="
+          - "Família: {{ alert_family_var }}"
+          - "Alvos: {{ chaos_targets_var }}"
+          - "Prometheus: {{ prom_url }}"
+          - "Espera observação: {{ wait_observe }}s"
+          - "Auto-restore: {{ auto_restore_var }}"
+
+    - name: Exportar plano para o WF
+      ansible.builtin.set_stats:
+        aggregate: false
+        data:
+          stats_chaos_plan_family: "{{ alert_family_var }}"
+          stats_chaos_plan_targets: "{{ chaos_targets_var }}"
+          stats_chaos_plan_auto_restore: "{{ auto_restore_var }}"
