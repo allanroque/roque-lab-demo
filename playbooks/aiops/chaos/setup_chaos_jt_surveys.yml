@@ -130,11 +130,11 @@
               min: null
               max: null
             - question_name: "URL do Prometheus"
-              question_description: "Ex.: http://localhost:9090"
+              question_description: "URL acessivel a partir do EE (NAO use localhost se Prometheus estiver em outro host)"
               required: true
               type: text
               variable: prometheus_url
-              default: "http://localhost:9090"
+              default: "http://192.168.100.1:9090"
               min: 1
               max: 256
             - question_name: "Alertname esperado (opcional)"
