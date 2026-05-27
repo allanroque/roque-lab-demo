@@ -70,9 +70,13 @@
             - role: user
               content: "{{ ai_user_prompt }}"
 
+    - name: Definir URL completa do endpoint chat completions
+      ansible.builtin.set_fact:
+        litellm_url: "{{ litellm_host if (litellm_host is search('/chat/completions')) else (litellm_host | regex_replace('/$', '') + '/v1/chat/completions') }}"
+
     - name: Chamar LiteLLM (chat completions)
       ansible.builtin.uri:
-        url: "{{ litellm_host }}/v1/chat/completions"
+        url: "{{ litellm_url }}"
         method: POST
         headers:
           Authorization: "Bearer {{ litellm_token }}"
