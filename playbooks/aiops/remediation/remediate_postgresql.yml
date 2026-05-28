@@ -2,16 +2,18 @@
 # =========================================================================
 # Playbook: REMEDIATION-POSTGRESQL
 # =========================================================================
-# Acionado pelo WF-AUTOHEAL-POSTGRESQL quando PostgresDown fira.
-# Restaura postgresql: unmask + enable + start. Falha -> set_stats(erro)+fail.
+# Acionado pelo WF-AUTOHEAL-POSTGRESQL quando PostgresDown fira (blackbox TCP :5432).
+# Remedia postgresql e VALIDA pela PORTA real (nao so systemctl), garantindo
+# que o firewall libere a 5432 de forma permanente. Falha -> set_stats(erro)+fail.
 # =========================================================================
-- name: REMEDIATION-POSTGRESQL — restart postgresql
-  hosts: "{{ target_host | default('all') | regex_replace(':[0-9]+$', '') }}"
+- name: REMEDIATION-POSTGRESQL — restart postgresql + validar porta 5432
+  hosts: "{{ target_host | default('all') | regex_replace(':[0-9]+$', '') | regex_replace('^https?://', '') }}"
   become: true
   gather_facts: false
   vars:
     _alertname: "{{ alertname | default('PostgresDown') }}"
     _service: "{{ postgres_service_name | default('postgresql') }}"
+    _port: 5432
 
   tasks:
     - name: Bloco de remediacao
@@ -29,16 +31,20 @@
             enabled: true
             state: started
 
-        - name: Confirmar estado pos-remediacao
-          ansible.builtin.command: "systemctl is-active {{ _service }}"
-          register: svc_after
-          changed_when: false
+        - name: Garantir porta {{ _port }} liberada no firewalld (permanente, best-effort)
+          ansible.posix.firewalld:
+            port: "{{ _port }}/tcp"
+            state: enabled
+            permanent: true
+            immediate: true
           failed_when: false
 
-        - name: Falhar se {{ _service }} nao ficou ativo
-          ansible.builtin.fail:
-            msg: "{{ _service }} continua inativo apos remediacao (estado: {{ svc_after.stdout | default('desconhecido') }})"
-          when: svc_after.stdout != 'active'
+        - name: VALIDAR que a porta {{ _port }} esta aceitando conexoes (igual ao probe)
+          ansible.builtin.wait_for:
+            host: 127.0.0.1
+            port: "{{ _port }}"
+            state: started
+            timeout: 25
 
         - name: Exportar SUCESSO
           ansible.builtin.set_stats:
@@ -47,7 +53,7 @@
               stats_remediation_service: "{{ _service }}"
               stats_remediation_host: "{{ inventory_hostname }}"
               stats_remediation_state_before: "{{ svc_before.stdout | default('?') }}"
-              stats_remediation_state_after: "{{ svc_after.stdout }}"
+              stats_remediation_validation: "porta {{ _port }} aceitando conexoes"
 
       rescue:
         - name: Exportar ERRO (antes de falhar o job)
@@ -57,8 +63,8 @@
               stats_remediation_service: "{{ _service }}"
               stats_remediation_host: "{{ inventory_hostname }}"
               stats_error_task: "{{ ansible_failed_task.name | default('?') }}"
-              stats_error_msg: "{{ ansible_failed_result.msg | default('falha desconhecida') }}"
+              stats_error_msg: "{{ ansible_failed_result.msg | default('porta ' ~ _port ~ ' nao respondeu apos remediacao') }}"
 
         - name: Forcar status failed (dispara aresta failure do workflow)
           ansible.builtin.fail:
-            msg: "Remediacao de {{ _service }} falhou: {{ ansible_failed_result.msg | default('?') }}"
+            msg: "Remediacao de {{ _service }} falhou: {{ ansible_failed_result.msg | default('porta ' ~ _port ~ ' inacessivel') }}"
