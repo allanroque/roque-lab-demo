@@ -61,10 +61,10 @@
           name: "WF-AUTOHEAL-APACHE"
           organization: "ROQUE"
           job_args:
-            limit: "{{ event.meta.hosts }}"
+            limit: "{{ event.alert.labels.instance.split('://')[-1].split(':')[0] }}"
           extra_vars:
             alertname: "{{ event.alert.labels.alertname }}"
-            target_host: "{{ event.alert.labels.instance }}"
+            target_host: "{{ event.alert.labels.instance.split('://')[-1].split(':')[0] }}"
             sn_short_description: "{{ event.alert.annotations.summary | default('ApacheDown firing') }}"
             sn_description: "{{ event.alert.annotations.description | default('httpd indisponivel') }}"
 
@@ -75,10 +75,10 @@
           name: "WF-AUTOHEAL-POSTGRESQL"
           organization: "ROQUE"
           job_args:
-            limit: "{{ event.meta.hosts }}"
+            limit: "{{ event.alert.labels.instance.split('://')[-1].split(':')[0] }}"
           extra_vars:
             alertname: "{{ event.alert.labels.alertname }}"
-            target_host: "{{ event.alert.labels.instance }}"
+            target_host: "{{ event.alert.labels.instance.split('://')[-1].split(':')[0] }}"
             sn_short_description: "{{ event.alert.annotations.summary | default('PostgresDown firing') }}"
             sn_description: "{{ event.alert.annotations.description | default('postgresql indisponivel') }}"
 
@@ -89,10 +89,10 @@
           name: "WF-AUTOHEAL-RSYSLOG"
           organization: "ROQUE"
           job_args:
-            limit: "{{ event.meta.hosts }}"
+            limit: "{{ event.alert.labels.instance.split('://')[-1].split(':')[0] }}"
           extra_vars:
             alertname: "{{ event.alert.labels.alertname }}"
-            target_host: "{{ event.alert.labels.instance }}"
+            target_host: "{{ event.alert.labels.instance.split('://')[-1].split(':')[0] }}"
             sn_short_description: "{{ event.alert.annotations.summary | default('RsyslogDown firing') }}"
             sn_description: "{{ event.alert.annotations.description | default('rsyslog indisponivel') }}"
 
@@ -103,10 +103,10 @@
           name: "WF-AUTOHEAL-CHRONY"
           organization: "ROQUE"
           job_args:
-            limit: "{{ event.meta.hosts }}"
+            limit: "{{ event.alert.labels.instance.split('://')[-1].split(':')[0] }}"
           extra_vars:
             alertname: "{{ event.alert.labels.alertname }}"
-            target_host: "{{ event.alert.labels.instance }}"
+            target_host: "{{ event.alert.labels.instance.split('://')[-1].split(':')[0] }}"
             sn_short_description: "{{ event.alert.annotations.summary | default('ChronyDown firing') }}"
             sn_description: "{{ event.alert.annotations.description | default('chronyd indisponivel') }}"
 
@@ -117,10 +117,10 @@
           name: "WF-AUTOHEAL-FIREWALL"
           organization: "ROQUE"
           job_args:
-            limit: "{{ event.meta.hosts }}"
+            limit: "{{ event.alert.labels.instance.split('://')[-1].split(':')[0] }}"
           extra_vars:
             alertname: "{{ event.alert.labels.alertname }}"
-            target_host: "{{ event.alert.labels.instance }}"
+            target_host: "{{ event.alert.labels.instance.split('://')[-1].split(':')[0] }}"
             sn_short_description: "{{ event.alert.annotations.summary | default('FirewalldDown firing') }}"
             sn_description: "{{ event.alert.annotations.description | default('firewalld indisponivel') }}"
 
