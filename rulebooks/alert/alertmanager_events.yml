@@ -24,34 +24,19 @@
             alerta: "{{ event.alert.labels.alertname }}"
             hostname: "{{ event.alert.labels.instance }}"
 
-    - name: "AIOps Fallback — AppDown (sem automação prévia)"
+    - name: "AutoHeal — AppDown (nginx)"
       condition: event.alert.labels.alertname == "AppDown" and event.alert.status == "firing"
       action:
         run_workflow_template:
-          name: "WF-AIOPS-ENRICHMENT"
+          name: "WF-AUTOHEAL-NGINX"
           organization: "ROQUE"
           job_args:
-            limit: "{{ event.meta.hosts }}"
+            limit: "{{ event.alert.labels.instance.split('://')[-1].split(':')[0] }}"
           extra_vars:
             alertname: "{{ event.alert.labels.alertname }}"
-            target_host: "{{ event.alert.labels.instance }}"
-            service_name: "{{ event.alert.labels.service | default('httpd') }}"
-            alert_summary: "{{ event.alert.annotations.summary | default('AppDown firing') }}"
-
-    # BEGIN AIOPS AUTO-LEARN: AppDown
-    - name: "AUTO-LEARN — AppDown → AIOPS-DYN-INC0017650"
-      condition: event.alert.labels.alertname == "AppDown" and event.alert.status == "firing"
-      action:
-        run_job_template:
-          name: "AIOPS-DYN-INC0017650"
-          organization: "ROQUE"
-          job_args:
-            limit: "{{ event.meta.hosts }}"
-          extra_vars:
-            target_host: "{{ event.alert.labels.instance }}"
-            service_name: "httpd"
-            alertname: "AppDown"
-    # END AIOPS AUTO-LEARN: AppDown
+            target_host: "{{ event.alert.labels.instance.split('://')[-1].split(':')[0] }}"
+            sn_short_description: "{{ event.alert.annotations.summary | default('AppDown firing') }}"
+            sn_description: "{{ event.alert.annotations.description | default('nginx indisponivel') }}"
 
     # ===== Closed-loop WF-AUTOHEAL (abre INC -> remedia -> fecha/anota) =====
     - name: "AutoHeal — ApacheDown"
