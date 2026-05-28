@@ -1,17 +1,18 @@
 ---
 # =========================================================================
-# Playbook: REMEDIATION-RSYSLOG
+# Playbook: REMEDIATION-NGINX
 # =========================================================================
-# Acionado pelo WF-AUTOHEAL-RSYSLOG quando RsyslogDown fira.
-# Restaura rsyslog: unmask + enable + start. Falha -> set_stats(erro)+fail.
+# Acionado pelo WF-AUTOHEAL-NGINX quando AppDown fira (app = nginx server03).
+# Restaura nginx: unmask + enable + start. Valida config antes de subir.
+# Falha -> set_stats(erro)+fail.
 # =========================================================================
-- name: REMEDIATION-RSYSLOG — restart rsyslog
+- name: REMEDIATION-NGINX — restart nginx
   hosts: "{{ target_host | default('all') | regex_replace(':[0-9]+$', '') }}"
   become: true
   gather_facts: false
   vars:
-    _alertname: "{{ alertname | default('RsyslogDown') }}"
-    _service: rsyslog
+    _alertname: "{{ alertname | default('AppDown') }}"
+    _service: "{{ app_service_name | default('nginx') }}"
 
   tasks:
     - name: Bloco de remediacao
@@ -19,6 +20,12 @@
         - name: Estado antes
           ansible.builtin.command: "systemctl is-active {{ _service }}"
           register: svc_before
+          changed_when: false
+          failed_when: false
+
+        - name: Validar configuracao do nginx (nginx -t)
+          ansible.builtin.command: nginx -t
+          register: nginx_test
           changed_when: false
           failed_when: false
 
@@ -37,7 +44,7 @@
 
         - name: Falhar se {{ _service }} nao ficou ativo
           ansible.builtin.fail:
-            msg: "{{ _service }} continua inativo apos remediacao (estado: {{ svc_after.stdout | default('desconhecido') }})"
+            msg: "{{ _service }} continua inativo apos remediacao (estado: {{ svc_after.stdout | default('desconhecido') }}). nginx -t: {{ nginx_test.stderr | default('') }}"
           when: svc_after.stdout != 'active'
 
         - name: Exportar SUCESSO

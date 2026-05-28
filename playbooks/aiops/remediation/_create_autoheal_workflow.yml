@@ -1,0 +1,153 @@
+---
+# =========================================================================
+# Task file (include_tasks): cria 1 workflow WF-AUTOHEAL-<svc> com 4 nos +
+# arestas success/failure. Idempotente: pula se o workflow ja existe.
+#
+# Espera (loop var):
+#   item.wf       - nome do workflow (ex: WF-AUTOHEAL-FIREWALL)
+#   item.svc      - service_name (ex: firewalld)
+#   item.rem_jt_id- id do JT de remediacao
+#   item.alertname- alertname correspondente
+# Espera (vars globais):
+#   controller_host, controller_token, controller_verify_ssl
+#   organization_id, inventory_id
+#   create_jt_id, close_jt_id, addnote_jt_id
+# =========================================================================
+- name: "[{{ item.wf }}] Verificar se workflow ja existe"
+  ansible.builtin.uri:
+    url: "{{ controller_host }}/api/controller/v2/workflow_job_templates/?name={{ item.wf | urlencode }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ controller_token }}"
+    validate_certs: "{{ controller_verify_ssl }}"
+    return_content: true
+  register: wf_lookup
+
+- name: "[{{ item.wf }}] Criar workflow (se nao existe)"
+  ansible.builtin.uri:
+    url: "{{ controller_host }}/api/controller/v2/workflow_job_templates/"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ controller_token }}"
+    body_format: json
+    body:
+      name: "{{ item.wf }}"
+      description: "Auto-heal closed-loop para {{ item.svc }}: abre INC -> remedia -> fecha (sucesso) ou anexa nota de erro (falha)."
+      organization: "{{ organization_id }}"
+      inventory: "{{ inventory_id }}"
+      ask_variables_on_launch: true
+      extra_vars: |
+        service_name: "{{ item.svc }}"
+        alertname: "{{ item.alertname }}"
+        sn_short_description: "Auto-heal: {{ item.svc }} indisponivel"
+        sn_description: "Alerta {{ item.alertname }} disparado. Pipeline AIOps acionado para remediar {{ item.svc }}."
+        sn_impact: "2"
+        sn_urgency: "2"
+    validate_certs: "{{ controller_verify_ssl }}"
+    status_code: [200, 201]
+  when: wf_lookup.json.count | int == 0
+  register: wf_created
+
+- name: "[{{ item.wf }}] Resolver wf_id"
+  ansible.builtin.set_fact:
+    wf_id: "{{ wf_created.json.id if (wf_lookup.json.count | int == 0) else wf_lookup.json.results[0].id }}"
+    wf_is_new: "{{ wf_lookup.json.count | int == 0 }}"
+
+- name: "[{{ item.wf }}] Montar nos e arestas (apenas se recem criado)"
+  when: wf_is_new | bool
+  block:
+    - name: "[{{ item.wf }}] No 1 - SNOW-INCIDENT-CREATE"
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/workflow_job_templates/{{ wf_id }}/workflow_nodes/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        body_format: json
+        body:
+          unified_job_template: "{{ create_jt_id | int }}"
+          identifier: "n1-snow-create"
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: [200, 201]
+      register: node1
+
+    - name: "[{{ item.wf }}] No 2 - REMEDIATION ({{ item.svc }})"
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/workflow_job_templates/{{ wf_id }}/workflow_nodes/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        body_format: json
+        body:
+          unified_job_template: "{{ item.rem_jt_id | int }}"
+          identifier: "n2-remediation"
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: [200, 201]
+      register: node2
+
+    - name: "[{{ item.wf }}] No 3 - SNOW-INCIDENT-CLOSE"
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/workflow_job_templates/{{ wf_id }}/workflow_nodes/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        body_format: json
+        body:
+          unified_job_template: "{{ close_jt_id | int }}"
+          identifier: "n3-snow-close"
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: [200, 201]
+      register: node3
+
+    - name: "[{{ item.wf }}] No 4 - SNOW-INCIDENT-ADD-NOTE"
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/workflow_job_templates/{{ wf_id }}/workflow_nodes/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        body_format: json
+        body:
+          unified_job_template: "{{ addnote_jt_id | int }}"
+          identifier: "n4-snow-addnote"
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: [200, 201]
+      register: node4
+
+    - name: "[{{ item.wf }}] Aresta: CREATE --success--> REMEDIATION"
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/workflow_job_template_nodes/{{ node1.json.id }}/success_nodes/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        body_format: json
+        body:
+          id: "{{ node2.json.id | int }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: [200, 201, 204]
+
+    - name: "[{{ item.wf }}] Aresta: REMEDIATION --success--> CLOSE"
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/workflow_job_template_nodes/{{ node2.json.id }}/success_nodes/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        body_format: json
+        body:
+          id: "{{ node3.json.id | int }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: [200, 201, 204]
+
+    - name: "[{{ item.wf }}] Aresta: REMEDIATION --failure--> ADD-NOTE"
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/workflow_job_template_nodes/{{ node2.json.id }}/failure_nodes/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        body_format: json
+        body:
+          id: "{{ node4.json.id | int }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: [200, 201, 204]
+
+- name: "[{{ item.wf }}] Resultado"
+  ansible.builtin.debug:
+    msg: "{{ item.wf }} (id {{ wf_id }}) — {{ 'CRIADO com 4 nos + arestas' if (wf_is_new | bool) else 'ja existia, nao alterado' }}"

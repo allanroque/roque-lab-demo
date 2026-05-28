@@ -1,17 +1,17 @@
 ---
 # =========================================================================
-# Playbook: REMEDIATION-RSYSLOG
+# Playbook: REMEDIATION-POSTGRESQL
 # =========================================================================
-# Acionado pelo WF-AUTOHEAL-RSYSLOG quando RsyslogDown fira.
-# Restaura rsyslog: unmask + enable + start. Falha -> set_stats(erro)+fail.
+# Acionado pelo WF-AUTOHEAL-POSTGRESQL quando PostgresDown fira.
+# Restaura postgresql: unmask + enable + start. Falha -> set_stats(erro)+fail.
 # =========================================================================
-- name: REMEDIATION-RSYSLOG — restart rsyslog
+- name: REMEDIATION-POSTGRESQL — restart postgresql
   hosts: "{{ target_host | default('all') | regex_replace(':[0-9]+$', '') }}"
   become: true
   gather_facts: false
   vars:
-    _alertname: "{{ alertname | default('RsyslogDown') }}"
-    _service: rsyslog
+    _alertname: "{{ alertname | default('PostgresDown') }}"
+    _service: "{{ postgres_service_name | default('postgresql') }}"
 
   tasks:
     - name: Bloco de remediacao

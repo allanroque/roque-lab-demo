@@ -2,61 +2,69 @@
 # =========================================================================
 # Playbook: REMEDIATION-CHRONY
 # =========================================================================
-# Acionado pelo EDA quando ChronyDown fira.
-# Restaura o chronyd: unmask + enable + start + sync forcada.
+# Acionado pelo WF-AUTOHEAL-CHRONY quando ChronyDown fira.
+# Restaura chronyd: unmask + enable + start + sync forcada (makestep).
+# Falha -> set_stats(erro)+fail.
 # =========================================================================
 - name: REMEDIATION-CHRONY — restart chronyd
   hosts: "{{ target_host | default('all') | regex_replace(':[0-9]+$', '') }}"
   become: true
-  gather_facts: true
+  gather_facts: false
   vars:
     _alertname: "{{ alertname | default('ChronyDown') }}"
     _service: chronyd
 
   tasks:
-    - name: Diagnosticar estado atual do {{ _service }}
-      ansible.builtin.command: "systemctl is-active {{ _service }}"
-      register: svc_state
-      changed_when: false
-      failed_when: false
+    - name: Bloco de remediacao
+      block:
+        - name: Estado antes
+          ansible.builtin.command: "systemctl is-active {{ _service }}"
+          register: svc_before
+          changed_when: false
+          failed_when: false
 
-    - name: Desmascarar, habilitar e iniciar {{ _service }}
-      ansible.builtin.systemd:
-        name: "{{ _service }}"
-        masked: false
-        enabled: true
-        state: started
+        - name: Desmascarar, habilitar e iniciar {{ _service }}
+          ansible.builtin.systemd:
+            name: "{{ _service }}"
+            masked: false
+            enabled: true
+            state: started
 
-    - name: Aguardar inicializacao
-      ansible.builtin.pause:
-        seconds: 3
+        - name: Forcar sincronizacao NTP (best-effort)
+          ansible.builtin.command: chronyc -a makestep
+          changed_when: false
+          failed_when: false
 
-    - name: Forcar sincronizacao com servidor NTP (best-effort)
-      ansible.builtin.command: chronyc -a makestep
-      register: chronyc_step
-      changed_when: false
-      failed_when: false
+        - name: Confirmar estado pos-remediacao
+          ansible.builtin.command: "systemctl is-active {{ _service }}"
+          register: svc_after
+          changed_when: false
+          failed_when: false
 
-    - name: Verificar estado pos-remediacao
-      ansible.builtin.command: "systemctl is-active {{ _service }}"
-      register: svc_after
-      changed_when: false
+        - name: Falhar se {{ _service }} nao ficou ativo
+          ansible.builtin.fail:
+            msg: "{{ _service }} continua inativo apos remediacao (estado: {{ svc_after.stdout | default('desconhecido') }})"
+          when: svc_after.stdout != 'active'
 
-    - name: Exibir resultado
-      ansible.builtin.debug:
-        msg:
-          - "Alerta: {{ _alertname }}"
-          - "Host: {{ inventory_hostname }}"
-          - "Antes: {{ svc_state.stdout | default('?') }}"
-          - "Depois: {{ svc_after.stdout }}"
-          - "Step output: {{ chronyc_step.stdout | default('-') }}"
+        - name: Exportar SUCESSO
+          ansible.builtin.set_stats:
+            data:
+              stats_remediation_success: true
+              stats_remediation_service: "{{ _service }}"
+              stats_remediation_host: "{{ inventory_hostname }}"
+              stats_remediation_state_before: "{{ svc_before.stdout | default('?') }}"
+              stats_remediation_state_after: "{{ svc_after.stdout }}"
 
-    - name: Exportar resultado
-      ansible.builtin.set_stats:
-        aggregate: false
-        data:
-          stats_remediation_service: "{{ _service }}"
-          stats_remediation_host: "{{ inventory_hostname }}"
-          stats_remediation_state_before: "{{ svc_state.stdout | default('?') }}"
-          stats_remediation_state_after: "{{ svc_after.stdout }}"
-          stats_remediation_success: "{{ svc_after.stdout == 'active' }}"
+      rescue:
+        - name: Exportar ERRO (antes de falhar o job)
+          ansible.builtin.set_stats:
+            data:
+              stats_remediation_success: false
+              stats_remediation_service: "{{ _service }}"
+              stats_remediation_host: "{{ inventory_hostname }}"
+              stats_error_task: "{{ ansible_failed_task.name | default('?') }}"
+              stats_error_msg: "{{ ansible_failed_result.msg | default('falha desconhecida') }}"
+
+        - name: Forcar status failed (dispara aresta failure do workflow)
+          ansible.builtin.fail:
+            msg: "Remediacao de {{ _service }} falhou: {{ ansible_failed_result.msg | default('?') }}"

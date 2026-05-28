@@ -1,17 +1,18 @@
 ---
 # =========================================================================
-# Playbook: REMEDIATION-RSYSLOG
+# Playbook: REMEDIATION-APACHE
 # =========================================================================
-# Acionado pelo WF-AUTOHEAL-RSYSLOG quando RsyslogDown fira.
-# Restaura rsyslog: unmask + enable + start. Falha -> set_stats(erro)+fail.
+# Acionado pelo WF-AUTOHEAL-APACHE quando ApacheDown fira.
+# Restaura httpd: unmask + enable + start. Em caso de falha, captura o erro
+# via set_stats (rescue) e forca status failed para disparar a aresta failure.
 # =========================================================================
-- name: REMEDIATION-RSYSLOG — restart rsyslog
+- name: REMEDIATION-APACHE — restart httpd
   hosts: "{{ target_host | default('all') | regex_replace(':[0-9]+$', '') }}"
   become: true
   gather_facts: false
   vars:
-    _alertname: "{{ alertname | default('RsyslogDown') }}"
-    _service: rsyslog
+    _alertname: "{{ alertname | default('ApacheDown') }}"
+    _service: httpd
 
   tasks:
     - name: Bloco de remediacao

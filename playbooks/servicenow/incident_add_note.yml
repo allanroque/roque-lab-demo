@@ -1,0 +1,71 @@
+---
+# =========================================================================
+# Playbook: Adicionar work_note de FALHA no Incidente (ServiceNow)
+# =========================================================================
+# Usado no ramo de FALHA do WF-AUTOHEAL-*: a remediacao nao resolveu, entao
+# este playbook anexa uma work_note com os detalhes do erro e DEIXA o
+# incidente ABERTO para analise humana.
+#
+# Recebe (via set_stats propagado dos nos anteriores do workflow):
+#   sn_incident_number           - do no SNOW-INCIDENT-CREATE
+#   stats_remediation_service    - do no REMEDIATION-* (rescue)
+#   stats_remediation_host       - idem
+#   stats_error_task             - task que falhou
+#   stats_error_msg              - mensagem de erro
+#
+# Credenciais (AAP): snow_* | SNOW_* (tipo nativo) | SN_* + injector custom
+# (NAO precisa de credencial do Controller — tudo vem via set_stats)
+# =========================================================================
+- name: ServiceNow — work_note de falha de automacao
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    _sn_url: "{{ snow_host | default(SNOW_INSTANCE | default(SN_HOST | default(''))) }}"
+    _sn_user: "{{ snow_username | default(SNOW_USERNAME | default(SN_USERNAME | default(''))) }}"
+    _sn_pass: "{{ snow_password | default(SNOW_PASSWORD | default(SN_PASSWORD | default(''))) }}"
+    _incident: "{{ sn_incident_number | default('') }}"
+    _svc: "{{ stats_remediation_service | default(service_name | default('serviço')) }}"
+    _host: "{{ stats_remediation_host | default(target_host | default('host desconhecido')) }}"
+    _err_task: "{{ stats_error_task | default('não capturada (host inacessível ou erro inesperado)') }}"
+    _err_msg: "{{ stats_error_msg | default('a remediação automática não conseguiu restaurar o serviço') }}"
+    _job_id: "{{ ac_job_id | default(awx_job_id | default('?')) }}"
+
+  tasks:
+    - name: Validar pre-condicoes
+      ansible.builtin.assert:
+        that:
+          - _sn_url | length > 0
+          - _incident | length > 0
+        fail_msg: "Credencial SNOW e sn_incident_number sao obrigatorios."
+
+    - name: Anexar work_note de falha no incidente {{ _incident }}
+      servicenow.itsm.incident:
+        instance:
+          host: "{{ _sn_url }}"
+          username: "{{ _sn_user }}"
+          password: "{{ _sn_pass }}"
+        number: "{{ _incident }}"
+        other:
+          work_notes: >-
+            [AIOps] A automação NÃO conseguiu resolver este incidente.
+            Serviço: {{ _svc }} | Host: {{ _host }}.
+            Task que falhou: {{ _err_task }}.
+            Erro: {{ _err_msg }}.
+            Job AAP de remediação: {{ _job_id }}.
+            >> Incidente mantido ABERTO — encaminhar para análise humana.
+      register: note_result
+
+    - name: Exibir resultado
+      ansible.builtin.debug:
+        msg:
+          - "Incidente {{ _incident }} — work_note de falha anexada."
+          - "Serviço: {{ _svc }} | Host: {{ _host }}"
+          - "Erro: {{ _err_msg }}"
+
+    - name: Exportar resultado
+      ansible.builtin.set_stats:
+        data:
+          sn_incident_number: "{{ _incident }}"
+          sn_incident_status: "open-failed-automation"
+          stats_addnote_done: true

@@ -53,41 +53,76 @@
             alertname: "AppDown"
     # END AIOPS AUTO-LEARN: AppDown
 
-    - name: "Auto-remediate RsyslogDown"
+    # ===== Closed-loop WF-AUTOHEAL (abre INC -> remedia -> fecha/anota) =====
+    - name: "AutoHeal — ApacheDown"
+      condition: event.alert.labels.alertname == "ApacheDown" and event.alert.status == "firing"
+      action:
+        run_workflow_template:
+          name: "WF-AUTOHEAL-APACHE"
+          organization: "ROQUE"
+          job_args:
+            limit: "{{ event.meta.hosts }}"
+          extra_vars:
+            alertname: "{{ event.alert.labels.alertname }}"
+            target_host: "{{ event.alert.labels.instance }}"
+            sn_short_description: "{{ event.alert.annotations.summary | default('ApacheDown firing') }}"
+            sn_description: "{{ event.alert.annotations.description | default('httpd indisponivel') }}"
+
+    - name: "AutoHeal — PostgresDown"
+      condition: event.alert.labels.alertname == "PostgresDown" and event.alert.status == "firing"
+      action:
+        run_workflow_template:
+          name: "WF-AUTOHEAL-POSTGRESQL"
+          organization: "ROQUE"
+          job_args:
+            limit: "{{ event.meta.hosts }}"
+          extra_vars:
+            alertname: "{{ event.alert.labels.alertname }}"
+            target_host: "{{ event.alert.labels.instance }}"
+            sn_short_description: "{{ event.alert.annotations.summary | default('PostgresDown firing') }}"
+            sn_description: "{{ event.alert.annotations.description | default('postgresql indisponivel') }}"
+
+    - name: "AutoHeal — RsyslogDown"
       condition: event.alert.labels.alertname == "RsyslogDown" and event.alert.status == "firing"
       action:
-        run_job_template:
-          name: "REMEDIATION-RSYSLOG"
+        run_workflow_template:
+          name: "WF-AUTOHEAL-RSYSLOG"
           organization: "ROQUE"
           job_args:
             limit: "{{ event.meta.hosts }}"
           extra_vars:
             alertname: "{{ event.alert.labels.alertname }}"
             target_host: "{{ event.alert.labels.instance }}"
+            sn_short_description: "{{ event.alert.annotations.summary | default('RsyslogDown firing') }}"
+            sn_description: "{{ event.alert.annotations.description | default('rsyslog indisponivel') }}"
 
-    - name: "Auto-remediate ChronyDown"
+    - name: "AutoHeal — ChronyDown"
       condition: event.alert.labels.alertname == "ChronyDown" and event.alert.status == "firing"
       action:
-        run_job_template:
-          name: "REMEDIATION-CHRONY"
+        run_workflow_template:
+          name: "WF-AUTOHEAL-CHRONY"
           organization: "ROQUE"
           job_args:
             limit: "{{ event.meta.hosts }}"
           extra_vars:
             alertname: "{{ event.alert.labels.alertname }}"
             target_host: "{{ event.alert.labels.instance }}"
+            sn_short_description: "{{ event.alert.annotations.summary | default('ChronyDown firing') }}"
+            sn_description: "{{ event.alert.annotations.description | default('chronyd indisponivel') }}"
 
-    - name: "Auto-remediate FirewalldDown"
+    - name: "AutoHeal — FirewalldDown"
       condition: event.alert.labels.alertname == "FirewalldDown" and event.alert.status == "firing"
       action:
-        run_job_template:
-          name: "REMEDIATION-FIREWALL"
+        run_workflow_template:
+          name: "WF-AUTOHEAL-FIREWALL"
           organization: "ROQUE"
           job_args:
             limit: "{{ event.meta.hosts }}"
           extra_vars:
             alertname: "{{ event.alert.labels.alertname }}"
             target_host: "{{ event.alert.labels.instance }}"
+            sn_short_description: "{{ event.alert.annotations.summary | default('FirewalldDown firing') }}"
+            sn_description: "{{ event.alert.annotations.description | default('firewalld indisponivel') }}"
 
     - name: "Print de qualquer alerta recebido do Alertmanager"
       condition: event.alert is defined

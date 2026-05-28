@@ -1,0 +1,181 @@
+---
+# =========================================================================
+# Playbook: bootstrap_autoheal.yml
+# =========================================================================
+# One-shot. Constroi o closed-loop completo:
+#   1) Cria 3 JTs de remediacao novos (APACHE/POSTGRESQL/NGINX) + SSH cred
+#   2) Cria JT SNOW-INCIDENT-ADD-NOTE + copia as creds SNOW do INCIDENT-CREATE
+#   3) Resolve ids de todos os JTs (create/close/addnote/remediation x6)
+#   4) Cria 6 workflows WF-AUTOHEAL-* (CREATE -> REMEDIATION ->
+#      success:CLOSE / failure:ADD-NOTE) via _create_autoheal_workflow.yml
+#
+# Credencial para o LAUNCH: CRED-AAP-ROQUE (id 38)
+# =========================================================================
+- name: BOOTSTRAP — WF-AUTOHEAL closed-loop
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    controller_host: "{{ lookup('env', 'CONTROLLER_HOST') | default(lookup('env', 'AAP_HOSTNAME'), true) }}"
+    controller_token: "{{ lookup('env', 'CONTROLLER_OAUTH_TOKEN') | default(lookup('env', 'AAP_TOKEN'), true) }}"
+    controller_verify_ssl: "{{ (lookup('env', 'CONTROLLER_VERIFY_SSL') | default('false', true)) | bool }}"
+    organization_id: 15
+    inventory_id: 26
+    execution_environment_id: 13
+    ssh_credential_id: 34
+    create_jt_name: "SNOW-INCIDENT-CREATE"
+    close_jt_name: "SNOW-INCIDENT-CLOSE"
+    addnote_jt_name: "SNOW-INCIDENT-ADD-NOTE"
+
+    new_remediation_jts:
+      - { name: "REMEDIATION-APACHE",     playbook: "playbooks/aiops/remediation/remediate_apache.yml" }
+      - { name: "REMEDIATION-POSTGRESQL", playbook: "playbooks/aiops/remediation/remediate_postgresql.yml" }
+      - { name: "REMEDIATION-NGINX",      playbook: "playbooks/aiops/remediation/remediate_nginx.yml" }
+
+  tasks:
+    - name: Validar credenciais
+      ansible.builtin.assert:
+        that:
+          - controller_host | length > 0
+          - controller_token | length > 0
+
+    # ---------- 1) JTs de remediacao novos ----------
+    - name: Criar JT de remediacao (se nao existe)
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/job_templates/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        body_format: json
+        body:
+          name: "{{ item.name }}"
+          description: "Remediacao do servico (auto-heal). Acionado pelo WF-AUTOHEAL."
+          job_type: "run"
+          inventory: "{{ inventory_id }}"
+          project: 278
+          playbook: "{{ item.playbook }}"
+          execution_environment: "{{ execution_environment_id }}"
+          organization: "{{ organization_id }}"
+          verbosity: 1
+          become_enabled: true
+          ask_variables_on_launch: true
+          ask_limit_on_launch: true
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: [200, 201, 400]
+      loop: "{{ new_remediation_jts }}"
+
+    # ---------- 2) JT SNOW-INCIDENT-ADD-NOTE ----------
+    - name: Criar JT SNOW-INCIDENT-ADD-NOTE (se nao existe)
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/job_templates/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        body_format: json
+        body:
+          name: "{{ addnote_jt_name }}"
+          description: "Anexa work_note de falha no incidente (ramo failure do WF-AUTOHEAL). So credencial SNOW."
+          job_type: "run"
+          inventory: "{{ inventory_id }}"
+          project: 278
+          playbook: "playbooks/servicenow/incident_add_note.yml"
+          execution_environment: "{{ execution_environment_id }}"
+          organization: "{{ organization_id }}"
+          verbosity: 1
+          ask_variables_on_launch: true
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: [200, 201, 400]
+
+    # ---------- 3) Resolver ids por nome ----------
+    - name: Resolver id de um JT por nome
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/job_templates/?name={{ item | urlencode }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        return_content: true
+      loop:
+        - "{{ create_jt_name }}"
+        - "{{ close_jt_name }}"
+        - "{{ addnote_jt_name }}"
+        - "REMEDIATION-APACHE"
+        - "REMEDIATION-POSTGRESQL"
+        - "REMEDIATION-NGINX"
+        - "REMEDIATION-FIREWALL"
+        - "REMEDIATION-CHRONY"
+        - "REMEDIATION-RSYSLOG"
+      register: jt_lookups
+
+    - name: Montar mapa nome->id
+      ansible.builtin.set_fact:
+        jt_ids: "{{ dict(jt_lookups.results | map(attribute='item') | list | zip(jt_lookups.results | map(attribute='json.results') | map('first') | map(attribute='id') | list)) }}"
+
+    - name: Exibir ids resolvidos
+      ansible.builtin.debug:
+        var: jt_ids
+
+    - name: Definir ids dos JTs fixos do workflow
+      ansible.builtin.set_fact:
+        create_jt_id: "{{ jt_ids[create_jt_name] }}"
+        close_jt_id: "{{ jt_ids[close_jt_name] }}"
+        addnote_jt_id: "{{ jt_ids[addnote_jt_name] }}"
+
+    # ---------- anexar SSH cred aos 3 remediation novos ----------
+    - name: Anexar SSH cred aos JTs de remediacao novos
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/job_templates/{{ jt_ids[item] }}/credentials/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        body_format: json
+        body: "{{ {'id': ssh_credential_id | int} }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: [200, 201, 204, 400]
+      loop:
+        - "REMEDIATION-APACHE"
+        - "REMEDIATION-POSTGRESQL"
+        - "REMEDIATION-NGINX"
+
+    # ---------- copiar creds SNOW do CREATE para o ADD-NOTE ----------
+    - name: Listar credenciais do SNOW-INCIDENT-CREATE
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/job_templates/{{ create_jt_id }}/credentials/"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        return_content: true
+      register: create_creds
+
+    - name: Anexar as mesmas credenciais ao ADD-NOTE
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/job_templates/{{ addnote_jt_id }}/credentials/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        body_format: json
+        body: "{{ {'id': item.id | int} }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: [200, 201, 204, 400]
+      loop: "{{ create_creds.json.results }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    # ---------- 4) Criar os 6 workflows ----------
+    - name: Criar workflows WF-AUTOHEAL-*
+      ansible.builtin.include_tasks: _create_autoheal_workflow.yml
+      loop:
+        - { wf: "WF-AUTOHEAL-APACHE",     svc: "httpd",      alertname: "ApacheDown",    rem_jt_id: "{{ jt_ids['REMEDIATION-APACHE'] }}" }
+        - { wf: "WF-AUTOHEAL-POSTGRESQL", svc: "postgresql", alertname: "PostgresDown",  rem_jt_id: "{{ jt_ids['REMEDIATION-POSTGRESQL'] }}" }
+        - { wf: "WF-AUTOHEAL-NGINX",      svc: "nginx",      alertname: "AppDown",       rem_jt_id: "{{ jt_ids['REMEDIATION-NGINX'] }}" }
+        - { wf: "WF-AUTOHEAL-FIREWALL",   svc: "firewalld",  alertname: "FirewalldDown", rem_jt_id: "{{ jt_ids['REMEDIATION-FIREWALL'] }}" }
+        - { wf: "WF-AUTOHEAL-CHRONY",     svc: "chronyd",    alertname: "ChronyDown",    rem_jt_id: "{{ jt_ids['REMEDIATION-CHRONY'] }}" }
+        - { wf: "WF-AUTOHEAL-RSYSLOG",    svc: "rsyslog",    alertname: "RsyslogDown",   rem_jt_id: "{{ jt_ids['REMEDIATION-RSYSLOG'] }}" }
+
+    - name: Exportar resumo
+      ansible.builtin.set_stats:
+        aggregate: false
+        data:
+          stats_jt_ids: "{{ jt_ids }}"
+          stats_autoheal_done: true
