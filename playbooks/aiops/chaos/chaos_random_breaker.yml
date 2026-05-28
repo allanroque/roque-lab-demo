@@ -7,20 +7,20 @@
 #        - server01.aroque.com.br -> httpd  (apache)
 #        - server02.aroque.com.br -> postgresql
 #        - server03.aroque.com.br -> nginx  (app)
-#      (pega UM dos tres, nao todos)
 #   2) Escolhe ALEATORIAMENTE 1 servidor + 1 serviço de INFRA e o quebra:
 #        - firewalld / rsyslog / chronyd  -> systemctl stop
 #        - selinux                        -> setenforce 0 (Permissive)
 #
-# Idempotente-safe: nunca falha o job (failed_when: false) — chaos eh esperado.
-# O objetivo eh gerar alertas no Prometheus e exercitar o pipeline AIOps/EDA.
+# IMPORTANTE: o stop roda NATIVAMENTE no host alvo (via SSH do inventario),
+# nao com delegate_to + connection local (que executaria dentro do EE).
+# Por isso usamos add_host + plays separados por grupo in-memory.
 #
 # Vars opcionais (Survey):
 #   dry_run            true  -> apenas decide e mostra, NAO quebra (default false)
 #   break_critical     true  -> habilita parada do serviço critico (default true)
 #   break_infra        true  -> habilita parada do serviço de infra (default true)
 # =========================================================================
-- name: AIOPS-CHAOS — Random Breaker
+- name: AIOPS-CHAOS — Sortear alvos
   hosts: localhost
   connection: local
   gather_facts: true
@@ -28,17 +28,14 @@
     dry_run_var: "{{ (dry_run | default(false)) | bool }}"
     do_critical: "{{ (break_critical | default(true)) | bool }}"
     do_infra: "{{ (break_infra | default(true)) | bool }}"
-
     critical_targets:
       - { host: "server01.aroque.com.br", service: "httpd", label: "apache" }
       - { host: "server02.aroque.com.br", service: "postgresql", label: "postgresql" }
       - { host: "server03.aroque.com.br", service: "nginx", label: "nginx" }
-
     infra_servers:
       - "server01.aroque.com.br"
       - "server02.aroque.com.br"
       - "server03.aroque.com.br"
-
     infra_services:
       - "firewalld"
       - "rsyslog"
@@ -60,45 +57,26 @@
           - "INFRA   : quebrar {{ chosen_infra_service }} em {{ chosen_infra_host }}  [habilitado={{ do_infra }}]"
           - "dry_run : {{ dry_run_var }}"
 
-    # ===================== SERVICO CRITICO =====================
-    - name: Parar serviço critico {{ chosen_critical.service }} em {{ chosen_critical.host }}
-      ansible.builtin.systemd:
-        name: "{{ chosen_critical.service }}"
-        state: stopped
-      delegate_to: "{{ chosen_critical.host }}"
-      become: true
-      failed_when: false
-      changed_when: true
+    - name: Registrar host critico no grupo in-memory _chaos_critical
+      ansible.builtin.add_host:
+        name: "{{ chosen_critical.host }}"
+        groups: _chaos_critical
+        crit_service: "{{ chosen_critical.service }}"
+      changed_when: false
       when:
         - do_critical
         - not dry_run_var
 
-    # ===================== SERVICO DE INFRA =====================
-    - name: Parar serviço de infra {{ chosen_infra_service }} em {{ chosen_infra_host }}
-      ansible.builtin.systemd:
-        name: "{{ chosen_infra_service }}"
-        state: stopped
-      delegate_to: "{{ chosen_infra_host }}"
-      become: true
-      failed_when: false
-      changed_when: true
+    - name: Registrar host de infra no grupo in-memory _chaos_infra
+      ansible.builtin.add_host:
+        name: "{{ chosen_infra_host }}"
+        groups: _chaos_infra
+        infra_service: "{{ chosen_infra_service }}"
+      changed_when: false
       when:
         - do_infra
         - not dry_run_var
-        - chosen_infra_service != 'selinux'
 
-    - name: Desativar SELinux (Permissive) em {{ chosen_infra_host }}
-      ansible.builtin.command: setenforce 0
-      delegate_to: "{{ chosen_infra_host }}"
-      become: true
-      failed_when: false
-      changed_when: true
-      when:
-        - do_infra
-        - not dry_run_var
-        - chosen_infra_service == 'selinux'
-
-    # ===================== RESUMO =====================
     - name: Exportar resumo da rodada
       ansible.builtin.set_stats:
         aggregate: false
@@ -109,3 +87,36 @@
           stats_chaos_infra_service: "{{ chosen_infra_service }}"
           stats_chaos_dry_run: "{{ dry_run_var }}"
           stats_chaos_timestamp: "{{ ansible_date_time.iso8601 }}"
+
+# ===================== PARAR SERVICO CRITICO (no host alvo) =====================
+- name: AIOPS-CHAOS — Parar serviço critico
+  hosts: _chaos_critical
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Parar {{ crit_service }} em {{ inventory_hostname }}
+      ansible.builtin.systemd:
+        name: "{{ crit_service }}"
+        state: stopped
+      failed_when: false
+      changed_when: true
+
+# ===================== PARAR SERVICO DE INFRA (no host alvo) =====================
+- name: AIOPS-CHAOS — Parar serviço de infra
+  hosts: _chaos_infra
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Parar {{ infra_service }} em {{ inventory_hostname }}
+      ansible.builtin.systemd:
+        name: "{{ infra_service }}"
+        state: stopped
+      failed_when: false
+      changed_when: true
+      when: infra_service != 'selinux'
+
+    - name: Desativar SELinux (Permissive) em {{ inventory_hostname }}
+      ansible.builtin.command: setenforce 0
+      failed_when: false
+      changed_when: true
+      when: infra_service == 'selinux'
