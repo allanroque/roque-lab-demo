@@ -1,0 +1,111 @@
+---
+# =========================================================================
+# Playbook: AIOPS-CHAOS — Random Breaker (Chaos Monkey)
+# =========================================================================
+# A cada execucao (agendado a cada 5 min):
+#   1) Escolhe ALEATORIAMENTE 1 serviço CRITICO e o para:
+#        - server01.aroque.com.br -> httpd  (apache)
+#        - server02.aroque.com.br -> postgresql
+#        - server03.aroque.com.br -> nginx  (app)
+#      (pega UM dos tres, nao todos)
+#   2) Escolhe ALEATORIAMENTE 1 servidor + 1 serviço de INFRA e o quebra:
+#        - firewalld / rsyslog / chronyd  -> systemctl stop
+#        - selinux                        -> setenforce 0 (Permissive)
+#
+# Idempotente-safe: nunca falha o job (failed_when: false) — chaos eh esperado.
+# O objetivo eh gerar alertas no Prometheus e exercitar o pipeline AIOps/EDA.
+#
+# Vars opcionais (Survey):
+#   dry_run            true  -> apenas decide e mostra, NAO quebra (default false)
+#   break_critical     true  -> habilita parada do serviço critico (default true)
+#   break_infra        true  -> habilita parada do serviço de infra (default true)
+# =========================================================================
+- name: AIOPS-CHAOS — Random Breaker
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    dry_run_var: "{{ (dry_run | default(false)) | bool }}"
+    do_critical: "{{ (break_critical | default(true)) | bool }}"
+    do_infra: "{{ (break_infra | default(true)) | bool }}"
+
+    critical_targets:
+      - { host: "server01.aroque.com.br", service: "httpd", label: "apache" }
+      - { host: "server02.aroque.com.br", service: "postgresql", label: "postgresql" }
+      - { host: "server03.aroque.com.br", service: "nginx", label: "nginx" }
+
+    infra_servers:
+      - "server01.aroque.com.br"
+      - "server02.aroque.com.br"
+      - "server03.aroque.com.br"
+
+    infra_services:
+      - "firewalld"
+      - "rsyslog"
+      - "chronyd"
+      - "selinux"
+
+  tasks:
+    - name: Sortear alvo critico e alvo de infra
+      ansible.builtin.set_fact:
+        chosen_critical: "{{ critical_targets | random(seed=ansible_date_time.iso8601_micro ~ '-c') }}"
+        chosen_infra_host: "{{ infra_servers | random(seed=ansible_date_time.iso8601_micro ~ '-h') }}"
+        chosen_infra_service: "{{ infra_services | random(seed=ansible_date_time.iso8601_micro ~ '-s') }}"
+
+    - name: Exibir o plano de caos desta rodada
+      ansible.builtin.debug:
+        msg:
+          - "===== CHAOS MONKEY — {{ ansible_date_time.iso8601 }} ====="
+          - "CRITICO : parar {{ chosen_critical.service }} ({{ chosen_critical.label }}) em {{ chosen_critical.host }}  [habilitado={{ do_critical }}]"
+          - "INFRA   : quebrar {{ chosen_infra_service }} em {{ chosen_infra_host }}  [habilitado={{ do_infra }}]"
+          - "dry_run : {{ dry_run_var }}"
+
+    # ===================== SERVICO CRITICO =====================
+    - name: Parar serviço critico {{ chosen_critical.service }} em {{ chosen_critical.host }}
+      ansible.builtin.systemd:
+        name: "{{ chosen_critical.service }}"
+        state: stopped
+      delegate_to: "{{ chosen_critical.host }}"
+      become: true
+      failed_when: false
+      changed_when: true
+      when:
+        - do_critical
+        - not dry_run_var
+
+    # ===================== SERVICO DE INFRA =====================
+    - name: Parar serviço de infra {{ chosen_infra_service }} em {{ chosen_infra_host }}
+      ansible.builtin.systemd:
+        name: "{{ chosen_infra_service }}"
+        state: stopped
+      delegate_to: "{{ chosen_infra_host }}"
+      become: true
+      failed_when: false
+      changed_when: true
+      when:
+        - do_infra
+        - not dry_run_var
+        - chosen_infra_service != 'selinux'
+
+    - name: Desativar SELinux (Permissive) em {{ chosen_infra_host }}
+      ansible.builtin.command: setenforce 0
+      delegate_to: "{{ chosen_infra_host }}"
+      become: true
+      failed_when: false
+      changed_when: true
+      when:
+        - do_infra
+        - not dry_run_var
+        - chosen_infra_service == 'selinux'
+
+    # ===================== RESUMO =====================
+    - name: Exportar resumo da rodada
+      ansible.builtin.set_stats:
+        aggregate: false
+        data:
+          stats_chaos_critical_host: "{{ chosen_critical.host }}"
+          stats_chaos_critical_service: "{{ chosen_critical.service }}"
+          stats_chaos_infra_host: "{{ chosen_infra_host }}"
+          stats_chaos_infra_service: "{{ chosen_infra_service }}"
+          stats_chaos_dry_run: "{{ dry_run_var }}"
+          stats_chaos_timestamp: "{{ ansible_date_time.iso8601 }}"
