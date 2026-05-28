@@ -1,0 +1,86 @@
+---
+# =========================================================================
+# Playbook: setup_chaos_breaker_schedule.yml
+# =========================================================================
+# One-shot:
+#   1) Anexa SSH cred (id 34) ao JT AIOPS-CHAOS-RANDOM-BREAKER
+#   2) Cria/atualiza Schedule "EVERY-5MIN-CHAOS" (FREQ=MINUTELY;INTERVAL=5)
+#
+# Credential para o LAUNCH: CRED-AAP-ROQUE (id 38)
+# =========================================================================
+- name: SETUP — Chaos Breaker schedule
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    controller_host: "{{ lookup('env', 'CONTROLLER_HOST') | default(lookup('env', 'AAP_HOSTNAME'), true) }}"
+    controller_token: "{{ lookup('env', 'CONTROLLER_OAUTH_TOKEN') | default(lookup('env', 'AAP_TOKEN'), true) }}"
+    controller_verify_ssl: "{{ (lookup('env', 'CONTROLLER_VERIFY_SSL') | default('false', true)) | bool }}"
+    breaker_jt_id: "{{ chaos_breaker_jt | default(424) | int }}"
+    ssh_credential_id: "{{ aiops_ssh_credential_id | default(34) | int }}"
+    schedule_name: "EVERY-5MIN-CHAOS"
+    schedule_interval_minutes: "{{ chaos_interval_min | default(5) | int }}"
+
+  tasks:
+    - name: Validar credenciais
+      ansible.builtin.assert:
+        that:
+          - controller_host | length > 0
+          - controller_token | length > 0
+
+    - name: Anexar SSH cred ao JT (id como int)
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/job_templates/{{ breaker_jt_id }}/credentials/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        body_format: json
+        body: "{{ {'id': ssh_credential_id | int} }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: [200, 201, 204, 400]
+
+    - name: Verificar schedules existentes com o mesmo nome
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/job_templates/{{ breaker_jt_id }}/schedules/?name={{ schedule_name | urlencode }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        return_content: true
+      register: existing_sched
+
+    - name: Montar DTSTART (UTC, agora arredondado)
+      ansible.builtin.set_fact:
+        dtstart: "{{ ansible_date_time.iso8601_basic_short | regex_replace('T.*', 'T000000Z') }}"
+
+    - name: Criar Schedule a cada {{ schedule_interval_minutes }} min (se nao existir)
+      ansible.builtin.uri:
+        url: "{{ controller_host }}/api/controller/v2/job_templates/{{ breaker_jt_id }}/schedules/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ controller_token }}"
+        body_format: json
+        body:
+          name: "{{ schedule_name }}"
+          description: "Chaos Monkey a cada {{ schedule_interval_minutes }} minutos"
+          enabled: true
+          rrule: "DTSTART:{{ dtstart }} RRULE:FREQ=MINUTELY;INTERVAL={{ schedule_interval_minutes }}"
+        validate_certs: "{{ controller_verify_ssl }}"
+        status_code: [200, 201, 400]
+      register: sched_create
+      when: existing_sched.json.count | int == 0
+
+    - name: Resultado
+      ansible.builtin.debug:
+        msg:
+          - "JT: {{ breaker_jt_id }} — SSH cred {{ ssh_credential_id }} anexada"
+          - "Schedule '{{ schedule_name }}': {{ 'ja existia' if (existing_sched.json.count | int > 0) else (sched_create.status | default('?')) }}"
+          - "rrule: DTSTART:{{ dtstart }} RRULE:FREQ=MINUTELY;INTERVAL={{ schedule_interval_minutes }}"
+
+    - name: Exportar stats
+      ansible.builtin.set_stats:
+        aggregate: false
+        data:
+          stats_breaker_jt: "{{ breaker_jt_id }}"
+          stats_schedule_name: "{{ schedule_name }}"
+          stats_schedule_existed: "{{ existing_sched.json.count | int > 0 }}"
