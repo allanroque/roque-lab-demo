@@ -119,8 +119,7 @@
         headers:
           Authorization: "Bearer {{ controller_token }}"
         body_format: json
-        body:
-          id: "{{ node2.json.id | int }}"
+        body: "{{ {'id': node2.json.id | int} }}"
         validate_certs: "{{ controller_verify_ssl }}"
         status_code: [200, 201, 204]
 
@@ -131,8 +130,7 @@
         headers:
           Authorization: "Bearer {{ controller_token }}"
         body_format: json
-        body:
-          id: "{{ node3.json.id | int }}"
+        body: "{{ {'id': node3.json.id | int} }}"
         validate_certs: "{{ controller_verify_ssl }}"
         status_code: [200, 201, 204]
 
@@ -143,8 +141,7 @@
         headers:
           Authorization: "Bearer {{ controller_token }}"
         body_format: json
-        body:
-          id: "{{ node4.json.id | int }}"
+        body: "{{ {'id': node4.json.id | int} }}"
         validate_certs: "{{ controller_verify_ssl }}"
         status_code: [200, 201, 204]
 
